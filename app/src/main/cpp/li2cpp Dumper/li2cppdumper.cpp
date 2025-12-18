@@ -5,343 +5,224 @@
 #include "li2cppdumper.h"
 #include "../Log/log.h"
 #include <sstream>
+#include <vector>
+#include <iomanip>
+#include <unordered_map>
 
-li2cpp::li2cppDumper::li2cppDumper(void*dqil2cppBase,
+li2cpp::li2cppDumper::li2cppDumper(void* dqil2cppBase,
                                    void *pCodeRegistration,
                                    void *pMetadataRegistration,
                                    void *pGlobalMetadataHeader,
-                                   void*pMetadataImagesTable):
-                                   li2cppApi::cUnityApi(dqil2cppBase,
-                                                        static_cast<Il2CppCodeRegistration *>(pCodeRegistration),
-                                                        static_cast<Il2CppMetadataRegistration *>(pMetadataRegistration),
-                                                        static_cast<Il2CppGlobalMetadataHeader *>(pGlobalMetadataHeader),
-                                                        static_cast<Il2CppImageGlobalMetadata *>(pMetadataImagesTable)){
+                                   void* pMetadataImagesTable) :
+        li2cppApi::cUnityApi(dqil2cppBase,
+                             static_cast<Il2CppCodeRegistration *>(pCodeRegistration),
+                             static_cast<Il2CppMetadataRegistration *>(pMetadataRegistration),
+                             static_cast<Il2CppGlobalMetadataHeader *>(pGlobalMetadataHeader),
+                             static_cast<Il2CppImageGlobalMetadata *>(pMetadataImagesTable)) {
 
-    if(m_outDumpCs == nullptr){
-        m_outDumpCs = std::make_shared<cMyfile>(m_pathDumpCs);
-        if(m_outDumpCs) {
-            m_outDumpCs->openFile(cMyfile::FileMode::ReadWrite);
+    // 初始化文件输出流
+    auto initFile = [&](std::shared_ptr<cMyfile>& file, const std::string& path) {
+        if (file == nullptr) {
+            file = std::make_shared<cMyfile>(path);
+            if (file) file->openFile(cMyfile::FileMode::ReadWrite);
         }
-    }
+    };
 
-    if(m_outDumpstr == nullptr){
-        m_outDumpstr = std::make_shared<cMyfile>(m_pathDumpstr);
-        if(m_outDumpstr) {
-            m_outDumpstr->openFile(cMyfile::FileMode::ReadWrite);
-        }
-    }
+    initFile(m_outDumpCs, m_pathDumpCs);
+    initFile(m_outDumpstr, m_pathDumpstr);
+    initFile(m_outlog, m_pathlog);
 
-    if(m_outlog == nullptr){
-        m_outlog = std::make_shared<cMyfile>(m_pathlog);
-        if(m_outlog){
-            m_outlog->openFile(cMyfile::FileMode::ReadWrite);
-        }
-    }
+    // 初始化容器
+    if (m_outPuts == nullptr) m_outPuts = std::make_shared<std::vector<std::string>>();
+    if (m_kIl2CppMetadataUsageStringLiteral == nullptr) m_kIl2CppMetadataUsageStringLiteral = std::make_shared<std::map<int, std::string>>();
 
-    if(m_outPuts == nullptr){
-         m_outPuts = std::make_shared<std::vector<std::string>>();
-    }
-
-    if(m_kIl2CppMetadataUsageStringLiteral == nullptr){
-        m_kIl2CppMetadataUsageStringLiteral = std::make_shared<std::map<int,std::string>>();
-    }
-
-    if(m_methodList == nullptr){
-        m_methodList = std::make_shared<std::list<std::shared_ptr<cMethodDefinitionAndMethodSpec>>>();
-    }
-
+    // 初始化方法索引表 (保留你原有追踪逻辑的同时，提升查询效率)
+    if (m_methodList == nullptr) m_methodList = std::make_shared<std::list<std::shared_ptr<cMethodDefinitionAndMethodSpec>>>();
+    m_methodMap = std::make_shared<std::unordered_multimap<uint32_t, std::shared_ptr<cMethodDefinitionAndMethodSpec>>>();
 }
 
-li2cpp::li2cppDumper::~li2cppDumper(){
-
-    if(m_outDumpCs){
-        for (const auto& elem : *m_outPuts) { // const& 避免拷贝，且只读
-            m_outDumpCs->writeLine(elem);
-        }
-        m_outDumpCs->flush();
-        m_outDumpCs->closeFile();
-    }
-
-    if(m_kIl2CppMetadataUsageStringLiteral){
-        for(const auto& elem:*m_kIl2CppMetadataUsageStringLiteral){
-            m_outDumpstr->writeLine(elem.second);
-        }
-        m_outDumpstr->flush();
-        m_outDumpstr->closeFile();
-    }
-
-    if(m_outlog){
-        m_outlog->flush();
-        m_outDumpstr->closeFile();
-    }
-
+li2cpp::li2cppDumper::~li2cppDumper() {
+    // 析构时统一冲刷缓冲区并关闭文件
+    if (m_outDumpCs) { m_outDumpCs->flush(); m_outDumpCs->closeFile(); }
+    if (m_outDumpstr) { m_outDumpstr->flush(); m_outDumpstr->closeFile(); }
+    if (m_outlog) { m_outlog->flush(); m_outlog->closeFile(); }
 
     m_methodList = nullptr;
     m_outPuts = nullptr;
-    m_outDumpCs = nullptr;
 }
 
-bool li2cpp::li2cppDumper::initInfo(){
+bool li2cpp::li2cppDumper::initInfo() {
+    if (m_pGlobalMetadataHeader == nullptr || m_pil2CppMetadataRegistration == nullptr) return false;
 
-    do {
-        //判断是否在调试状态
-        if(m_pGlobalMetadataHeader == nullptr ||
-        m_pil2CppMetadataRegistration == nullptr ||
-        il2cpp_is_debugger_attached()){
-            break;
-        }
+    char szbuf[0x1000] = {0};
+    sprintf(szbuf, "genericClassesCount : %d", m_pil2CppMetadataRegistration->genericClassesCount); writeLog(szbuf);
+    sprintf(szbuf, "typesCount : %d", m_pil2CppMetadataRegistration->typesCount); writeLog(szbuf);
 
-        char szbuf[0x1000] = {0};
-        /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        sprintf(szbuf,"genericClassesCount : %d",m_pil2CppMetadataRegistration->genericClassesCount);
-        writeLog(szbuf);
-        sprintf(szbuf,"genericInstsCount : %d",m_pil2CppMetadataRegistration->genericInstsCount);
-        writeLog(szbuf);
-        sprintf(szbuf,"genericMethodTableCount : %d",m_pil2CppMetadataRegistration->genericMethodTableCount);
-        writeLog(szbuf);
-        sprintf(szbuf,"typesCount : %d",m_pil2CppMetadataRegistration->typesCount);
-        writeLog(szbuf);
-        sprintf(szbuf,"fieldOffsetsCount : %d",m_pil2CppMetadataRegistration->fieldOffsetsCount);
-        writeLog(szbuf);
-        sprintf(szbuf,"genericClassesCount : %d",m_pil2CppMetadataRegistration->genericClassesCount);
-        writeLog(szbuf);
-        sprintf(szbuf,"typeDefinitionsSizesCount : %d",m_pil2CppMetadataRegistration->typeDefinitionsSizesCount);
-        writeLog(szbuf);
-        sprintf(szbuf,"metadataUsagesCount : %d",m_pil2CppMetadataRegistration->metadataUsagesCount);
-        writeLog(szbuf);
-        /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        sprintf(szbuf, "reversePInvokeWrapperCount : %d", m_pIl2CppCodeRegistration->reversePInvokeWrapperCount);
-        writeLog(szbuf);
-        sprintf(szbuf, "genericMethodPointersCount : %d", m_pIl2CppCodeRegistration->genericMethodPointersCount);
-        writeLog(szbuf);
-        sprintf(szbuf, "invokerPointersCount : %d", m_pIl2CppCodeRegistration->invokerPointersCount);
-        writeLog(szbuf);
-        sprintf(szbuf, "unresolvedIndirectCallCount : %d", m_pIl2CppCodeRegistration->unresolvedIndirectCallCount);
-        writeLog(szbuf);
-        sprintf(szbuf, "interopDataCount : %d", m_pIl2CppCodeRegistration->interopDataCount);
-        writeLog(szbuf);
-        sprintf(szbuf, "windowsRuntimeFactoryCount : %d", m_pIl2CppCodeRegistration->windowsRuntimeFactoryCount);
-        writeLog(szbuf);
-        sprintf(szbuf, "codeGenModulesCount : %d", m_pIl2CppCodeRegistration->codeGenModulesCount);
-        writeLog(szbuf);
+    // 1. 预处理：建立泛型方法哈希表 (保留并优化你的 dumpGenericsMethod)
+    dumpGenericsMethod();
 
-        dumpGenericsMethod();
-        dumpcs();
-        dumpStr();
+    // 2. 导出类结构 (边解析边实时写入文件，防止大内存占用)
+    dumpcs();
 
-        return true;
-    }while(0);
-    return false;
+    // 3. 导出字符串
+    dumpStr();
+
+    return true;
 }
 
-std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type) {
-    std::stringstream outPut;
-    auto *klass = il2cpp_class_from_type(type);
-    outPut << "\n// Namespace: " << il2cpp_class_get_namespace(klass) << "\n";
-    auto flags = il2cpp_class_get_flags(klass);
-    if (flags & TYPE_ATTRIBUTE_SERIALIZABLE) {
-        outPut << "[Serializable]\n";
-    }
-    //TODO attribute
-    auto is_valuetype = il2cpp_class_is_valuetype(klass);
-    auto is_enum = il2cpp_class_is_enum(klass);
-    auto visibility = flags & TYPE_ATTRIBUTE_VISIBILITY_MASK;
-    switch (visibility) {
-        case TYPE_ATTRIBUTE_PUBLIC:
-        case TYPE_ATTRIBUTE_NESTED_PUBLIC:
-            outPut << "public ";
-            break;
-        case TYPE_ATTRIBUTE_NOT_PUBLIC:
-        case TYPE_ATTRIBUTE_NESTED_FAM_AND_ASSEM:
-        case TYPE_ATTRIBUTE_NESTED_ASSEMBLY:
-            outPut << "internal ";
-            break;
-        case TYPE_ATTRIBUTE_NESTED_PRIVATE:
-            outPut << "private ";
-            break;
-        case TYPE_ATTRIBUTE_NESTED_FAMILY:
-            outPut << "protected ";
-            break;
-        case TYPE_ATTRIBUTE_NESTED_FAM_OR_ASSEM:
-            outPut << "protected internal ";
-            break;
-    }
-    if (flags & TYPE_ATTRIBUTE_ABSTRACT && flags & TYPE_ATTRIBUTE_SEALED) {
-        outPut << "static ";
-    } else if (!(flags & TYPE_ATTRIBUTE_INTERFACE) && flags & TYPE_ATTRIBUTE_ABSTRACT) {
-        outPut << "abstract ";
-    } else if (!is_valuetype && !is_enum && flags & TYPE_ATTRIBUTE_SEALED) {
-        outPut << "sealed ";
-    }
-    if (flags & TYPE_ATTRIBUTE_INTERFACE) {
-        outPut << "interface ";
-    } else if (is_enum) {
-        outPut << "enum ";
-    } else if (is_valuetype) {
-        outPut << "struct ";
-    } else {
-        outPut << "class ";
-    }
-
-
-    //判断是否是嵌套类型
-    std::string fullClassName = il2cpp_class_get_name(klass);
-    Il2CppClass* declaring = il2cpp_class_get_declaring_type(klass);
-    while (declaring != nullptr) {
-        fullClassName = std::string(il2cpp_class_get_name(declaring)) + "." + fullClassName;
-        declaring = il2cpp_class_get_declaring_type(declaring);
-    }
-    outPut << fullClassName;
-
-
-    //outPut << il2cpp_class_get_name(klass);
-
-    std::vector<std::string> extends;
-    auto parent = il2cpp_class_get_parent(klass);
-    if (!is_valuetype && !is_enum && parent) {
-        auto parent_type = il2cpp_class_get_type(parent);
-        if (parent_type->type != IL2CPP_TYPE_OBJECT) {
-            extends.emplace_back(il2cpp_class_get_name(parent));
-        }
-    }
-    void *iter = nullptr;
-    while (auto itf = il2cpp_class_get_interfaces(klass, &iter)) {
-        extends.emplace_back(il2cpp_class_get_name(itf));
-    }
-    if (!extends.empty()) {
-        outPut << " : " << extends[0];
-        for (int i = 1; i < extends.size(); ++i) {
-            outPut << ", " << extends[i];
-        }
-    }
-    outPut << "\n{";
-    outPut << dump_field(klass);
-    outPut << dump_property(klass);
-    outPut << dump_method(klass);
-    //TODO EventInfo
-    outPut << "}\n";
-    return outPut.str();
-}
-
+/**
+ * 核心类型解析：支持泛型实例、嵌套类、一维/多维数组
+ */
 std::string li2cpp::li2cppDumper::get_type_name(const Il2CppType* type) {
-    if (type == nullptr) {
-        return "void";
+    if (!type) return "void";
+    std::string suffix = type->byref ? "&" : "";
+
+    // 处理数组 (SZARRAY 一维, ARRAY 多维)
+    if (type->type == IL2CPP_TYPE_SZARRAY) {
+        return get_type_name(type->data.type) + "[]" + suffix;
+    } else if (type->type == IL2CPP_TYPE_ARRAY) {
+        std::string rankStr = "[";
+        for (int i = 1; i < type->data.array->rank; i++) rankStr += ",";
+        rankStr += "]";
+        return get_type_name(type->data.array->etype) + rankStr + suffix;
     }
 
-    // 处理指针和数组（简单示例）
-    if (type->byref) {
-        return get_type_name(type) + "&"; // 简单引用
+    switch (type->type) {
+        case IL2CPP_TYPE_VOID:    return "void" + suffix;
+        case IL2CPP_TYPE_BOOLEAN: return "bool" + suffix;
+        case IL2CPP_TYPE_I4:      return "int" + suffix;
+        case IL2CPP_TYPE_U4:      return "uint" + suffix;
+        case IL2CPP_TYPE_I8:      return "long" + suffix;
+        case IL2CPP_TYPE_R4:      return "float" + suffix;
+        case IL2CPP_TYPE_R8:      return "double" + suffix;
+        case IL2CPP_TYPE_STRING:  return "string" + suffix;
+        case IL2CPP_TYPE_OBJECT:  return "object" + suffix;
+        case IL2CPP_TYPE_VAR:
+        case IL2CPP_TYPE_MVAR:    return il2cpp_type_get_name(type) + suffix;
+        default: break;
     }
 
-    // ------------------------------------------
-    // 1. 获取 Il2CppClass
-    // ------------------------------------------
-    auto klass = il2cpp_class_from_type(type);
+    Il2CppClass* klass = il2cpp_class_from_type(type);
+    if (!klass) return "unknown" + suffix;
 
-    //判断类型
-    switch (type->type)
-    {
-        case IL2CPP_TYPE_VOID:
-        {
-           return "void";
-        }
-        case IL2CPP_TYPE_CLASS:
-        case IL2CPP_TYPE_VALUETYPE:
-        {
-            return klass && il2cpp_class_get_name(const_cast<Il2CppClass *>(klass)) ? il2cpp_class_get_name(const_cast<Il2CppClass *>(klass)) : "unknown";
-        }
-
-        case IL2CPP_TYPE_GENERICINST:
-        {
-            break;
-        }
-
-        case IL2CPP_TYPE_VAR:   // T
-            return il2cpp_type_get_name(type);
-
-        case IL2CPP_TYPE_MVAR:  // 方法泛型 T
-            return il2cpp_type_get_name(type);
-        default:
-            return "/* Unknown Type */";;
-    }
-
-    // ------------------------------------------
-    // 2. 拼接嵌套类名 (如 Display.DisplaysUpdatedDelegate)
-    // ------------------------------------------
     std::string typeName = il2cpp_class_get_name(klass);
-    Il2CppClass *declaring = il2cpp_class_get_declaring_type(klass);
-    while (declaring != nullptr) {
-        typeName = std::string(il2cpp_class_get_name(declaring)) + "." + typeName;
-        declaring = il2cpp_class_get_declaring_type(declaring);
+
+    // 递归解析嵌套类路径 (Outer.Inner)
+    Il2CppClass* declaring = il2cpp_class_get_declaring_type(klass);
+    if (declaring) {
+        typeName = get_type_name(&declaring->byval_arg) + "." + typeName;
     }
 
-    // ------------------------------------------
-    // 3. 处理泛型 (如 Dictionary<int, RenderInstancedDataLayout>)
-    // ------------------------------------------
-
-    // 移除末尾的 `N (例如 Dictionary`2 -> Dictionary)
+    // 清理反引号 (Dictionary`2 -> Dictionary)
     size_t backtickPos = typeName.find_last_of('`');
-    if (backtickPos != std::string::npos) {
-        typeName = typeName.substr(0, backtickPos);
-    }
+    if (backtickPos != std::string::npos) typeName = typeName.substr(0, backtickPos);
 
-    // 获取类型参数
-    auto generic_type = il2cpp_class_get_generic_class(klass);
-    if (generic_type) {
-        auto context = il2cpp_generic_class_get_context(generic_type);
-        auto inst = il2cpp_generic_context_get_generic_class_inst(context);
+    // 解析泛型实例参数 <T1, T2>
+    if (type->type == IL2CPP_TYPE_GENERICINST) {
+        const Il2CppGenericContext* context = &type->data.generic_class->context;
+        const Il2CppGenericInst* inst = context->class_inst ? context->class_inst : context->method_inst;
 
         if (inst && inst->type_argc > 0) {
             typeName += "<";
             for (uint32_t i = 0; i < inst->type_argc; ++i) {
-                if (i  > 0) {
-                    typeName += ", ";
-                }
-                // 递归调用 get_type_name 来处理泛型参数本身可能是泛型或嵌套类的情况
+                if (i > 0) typeName += ", ";
                 typeName += get_type_name(inst->type_argv[i]);
             }
             typeName += ">";
         }
     }
-    return typeName;
+    return typeName + suffix;
 }
 
+/**
+ * 类定义解析
+ */
+std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type) {
+    std::stringstream outPut;
+    auto *klass = il2cpp_class_from_type(type);
+    if (!klass) return "";
+
+    outPut << "\n// Namespace: " << il2cpp_class_get_namespace(klass) << "\n";
+
+    auto flags = il2cpp_class_get_flags(klass);
+    if (flags & TYPE_ATTRIBUTE_SERIALIZABLE) outPut << "[Serializable]\n";
+
+    // 类修饰符
+    auto visibility = flags & TYPE_ATTRIBUTE_VISIBILITY_MASK;
+    switch (visibility) {
+        case TYPE_ATTRIBUTE_PUBLIC:
+        case TYPE_ATTRIBUTE_NESTED_PUBLIC:     outPut << "public "; break;
+        case TYPE_ATTRIBUTE_NOT_PUBLIC:
+        case TYPE_ATTRIBUTE_NESTED_ASSEMBLY:   outPut << "internal "; break;
+        case TYPE_ATTRIBUTE_NESTED_PRIVATE:    outPut << "private "; break;
+        case TYPE_ATTRIBUTE_NESTED_FAMILY:     outPut << "protected "; break;
+        case TYPE_ATTRIBUTE_NESTED_FAM_OR_ASSEM: outPut << "protected internal "; break;
+    }
+
+    if ((flags & TYPE_ATTRIBUTE_ABSTRACT) && (flags & TYPE_ATTRIBUTE_SEALED)) outPut << "static ";
+    else if (!(flags & TYPE_ATTRIBUTE_INTERFACE) && (flags & TYPE_ATTRIBUTE_ABSTRACT)) outPut << "abstract ";
+    else if (!il2cpp_class_is_valuetype(klass) && !il2cpp_class_is_enum(klass) && (flags & TYPE_ATTRIBUTE_SEALED)) outPut << "sealed ";
+
+    if (flags & TYPE_ATTRIBUTE_INTERFACE) outPut << "interface ";
+    else if (il2cpp_class_is_enum(klass)) outPut << "enum ";
+    else if (il2cpp_class_is_valuetype(klass)) outPut << "struct ";
+    else outPut << "class ";
+
+    outPut << get_type_name(type);
+
+    // 继承与接口
+    std::vector<std::string> extends;
+    auto parent = il2cpp_class_get_parent(klass);
+    if (!il2cpp_class_is_valuetype(klass) && !il2cpp_class_is_enum(klass) && parent) {
+        auto p_type = il2cpp_class_get_type(parent);
+        if (p_type->type != IL2CPP_TYPE_OBJECT) extends.emplace_back(get_type_name(p_type));
+    }
+    void *itf_iter = nullptr;
+    while (auto itf = il2cpp_class_get_interfaces(klass, &itf_iter)) {
+        extends.emplace_back(get_type_name(il2cpp_class_get_type(itf)));
+    }
+    if (!extends.empty()) {
+        outPut << " : " << extends[0];
+        for (size_t i = 1; i < extends.size(); ++i) outPut << ", " << extends[i];
+    }
+
+    outPut << "\n{";
+    outPut << dump_field(klass);
+    outPut << dump_property(klass);
+    outPut << dump_method(klass);
+    outPut << "}\n";
+
+    return outPut.str();
+}
+
+/**
+ * 字段解析
+ */
 std::string li2cpp::li2cppDumper::dump_field(Il2CppClass *klass) {
     std::stringstream outPut;
     outPut << "\n\t// Fields\n";
-    auto is_enum = il2cpp_class_is_enum(klass);
     void *iter = nullptr;
     while (auto field = il2cpp_class_get_fields(klass, &iter)) {
-        //... [访问修饰符和关键字 (public/static/readonly/const) 保持不变] ...
         outPut << "\t";
         auto attrs = il2cpp_field_get_flags(field);
         auto access = attrs & FIELD_ATTRIBUTE_FIELD_ACCESS_MASK;
+
         switch (access) {
-            //... [省略访问修饰符 switch case] ...
-            case FIELD_ATTRIBUTE_FAM_OR_ASSEM:
-                outPut << "protected internal ";
-                break;
-        }
-        if (attrs & FIELD_ATTRIBUTE_LITERAL) {
-            outPut << "const ";
-        } else {
-            if (attrs & FIELD_ATTRIBUTE_STATIC) {
-                outPut << "static ";
-            }
-            if (attrs & FIELD_ATTRIBUTE_INIT_ONLY) {
-                outPut << "readonly ";
-            }
+            case FIELD_ATTRIBUTE_PRIVATE: outPut << "private "; break;
+            case FIELD_ATTRIBUTE_PUBLIC:  outPut << "public "; break;
+            case FIELD_ATTRIBUTE_FAMILY:  outPut << "protected "; break;
+            case FIELD_ATTRIBUTE_FAM_OR_ASSEM: outPut << "protected internal "; break;
         }
 
-        auto field_type = il2cpp_field_get_type(field);
+        if (attrs & FIELD_ATTRIBUTE_LITERAL) outPut << "const ";
+        else {
+            if (attrs & FIELD_ATTRIBUTE_STATIC) outPut << "static ";
+            if (attrs & FIELD_ATTRIBUTE_INIT_ONLY) outPut << "readonly ";
+        }
 
-        // --- 修改点：使用新的类型名称解析函数 ---
-        // outPut << il2cpp_class_get_name(il2cpp_class_from_type(field_type)) << " " << il2cpp_field_get_name(field); // 原有代码
-        outPut << get_type_name(field_type) << " " << il2cpp_field_get_name(field);
-        // ------------------------------------
+        outPut << get_type_name(il2cpp_field_get_type(field)) << " " << il2cpp_field_get_name(field);
 
-        //TODO 获取构造函数初始化后的字段值
-        if (attrs & FIELD_ATTRIBUTE_LITERAL && is_enum) {
+        if ((attrs & FIELD_ATTRIBUTE_LITERAL) && il2cpp_class_is_enum(klass)) {
             uint64_t val = 0;
             il2cpp_field_static_get_value(field, &val);
             outPut << " = " << std::dec << val;
@@ -351,462 +232,294 @@ std::string li2cpp::li2cppDumper::dump_field(Il2CppClass *klass) {
     return outPut.str();
 }
 
-std::string li2cpp::li2cppDumper::dump_property(Il2CppClass *klass) {
-    std::stringstream outPut;
-    outPut << "\n\t// Properties\n";
-    void *iter = nullptr;
-    while (auto prop_const = il2cpp_class_get_properties(klass, &iter)) {
-        //TODO attribute
-        auto prop = const_cast<PropertyInfo *>(prop_const);
-        auto get = il2cpp_property_get_get_method(prop);
-        auto set = il2cpp_property_get_set_method(prop);
-        auto prop_name = il2cpp_property_get_name(prop);
-        outPut << "\t";
-        Il2CppClass *prop_class = nullptr;
-        uint32_t iflags = 0;
-        if (get) {
-            outPut << get_method_modifier(il2cpp_method_get_flags(get, &iflags));
-            prop_class = il2cpp_class_from_type(il2cpp_method_get_return_type(get));
-        } else if (set) {
-            outPut << get_method_modifier(il2cpp_method_get_flags(set, &iflags));
-            auto param = il2cpp_method_get_param(set, 0);
-            prop_class = il2cpp_class_from_type(param);
-        }
-        if (prop_class) {
-            outPut << il2cpp_class_get_name(prop_class) << " " << prop_name << " { ";
-            if (get) {
-                outPut << "get; ";
-            }
-            if (set) {
-                outPut << "set; ";
-            }
-            outPut << "}\n";
-        } else {
-            if (prop_name) {
-                outPut << " // unknown property " << prop_name;
-            }
-        }
-    }
-    return outPut.str();
-}
-
-std::string li2cpp::li2cppDumper::get_method_modifier(uint32_t flags) {
-    std::stringstream outPut;
-    auto access = flags & METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK;
-    switch (access) {
-        case METHOD_ATTRIBUTE_PRIVATE:
-            outPut << "private ";
-            break;
-        case METHOD_ATTRIBUTE_PUBLIC:
-            outPut << "public ";
-            break;
-        case METHOD_ATTRIBUTE_FAMILY:
-            outPut << "protected ";
-            break;
-        case METHOD_ATTRIBUTE_ASSEM:
-        case METHOD_ATTRIBUTE_FAM_AND_ASSEM:
-            outPut << "internal ";
-            break;
-        case METHOD_ATTRIBUTE_FAM_OR_ASSEM:
-            outPut << "protected internal ";
-            break;
-    }
-    if (flags & METHOD_ATTRIBUTE_STATIC) {
-        outPut << "static ";
-    }
-    if (flags & METHOD_ATTRIBUTE_ABSTRACT) {
-        outPut << "abstract ";
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT) {
-            outPut << "override ";
-        }
-    } else if (flags & METHOD_ATTRIBUTE_FINAL) {
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT) {
-            outPut << "sealed override ";
-        }
-    } else if (flags & METHOD_ATTRIBUTE_VIRTUAL) {
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_NEW_SLOT) {
-            outPut << "virtual ";
-        } else {
-            outPut << "override ";
-        }
-    }
-    if (flags & METHOD_ATTRIBUTE_PINVOKE_IMPL) {
-        outPut << "extern ";
-    }
-    return outPut.str();
-}
-
+/**
+ * 方法解析 (支持泛型实例追踪)
+ */
 std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
     std::stringstream outPut;
     outPut << "\n\t// Methods\n";
     void *iter = nullptr;
     while (auto method = il2cpp_class_get_methods(klass, &iter)) {
-        //TODO attribute
         if (method->methodPointer) {
-            outPut << "\t// RVA: 0x";
-            outPut << std::hex << (uint64_t) method->methodPointer - Getil2cppModuleBase();
-            outPut << " VA: 0x";
-            outPut << std::hex << (uint64_t) method->methodPointer;
+            outPut << "\t// RVA: 0x" << std::hex << (uint64_t)method->methodPointer - Getil2cppModuleBase()
+                   << " VA: 0x" << (uint64_t)method->methodPointer << "\n";
         } else {
-            outPut << "\t// RVA: -1";
+            outPut << "\t// RVA: -1\n";
         }
-        /*if (method->slot != 65535) {
-            outPut << " Slot: " << std::dec << method->slot;
-        }*/
-        outPut << "\n\t";
+
+        outPut << "\t";
         uint32_t iflags = 0;
-        auto flags = il2cpp_method_get_flags(method, &iflags);
-        outPut << get_method_modifier(flags);
-        //TODO genericContainerIndex
+        outPut << get_method_modifier(il2cpp_method_get_flags(method, &iflags));
+
         auto return_type = il2cpp_method_get_return_type(method);
-        if (_il2cpp_type_is_byref(return_type)) {
-            outPut << "ref ";
-        }
-        auto return_class = il2cpp_class_from_type(return_type);
-        outPut << il2cpp_class_get_name(return_class) << " " << il2cpp_method_get_name(method)
-               << "(";
+        outPut << (return_type->byref ? "ref " : "") << get_type_name(return_type) << " " << il2cpp_method_get_name(method) << "(";
+
         auto param_count = il2cpp_method_get_param_count(method);
         for (int i = 0; i < param_count; ++i) {
             auto param = il2cpp_method_get_param(method, i);
-            auto attrs = param->attrs;
-            if (_il2cpp_type_is_byref(param)) {
-                if (attrs & PARAM_ATTRIBUTE_OUT && !(attrs & PARAM_ATTRIBUTE_IN)) {
-                    outPut << "out ";
-                } else if (attrs & PARAM_ATTRIBUTE_IN && !(attrs & PARAM_ATTRIBUTE_OUT)) {
-                    outPut << "in ";
-                } else {
-                    outPut << "ref ";
-                }
-            } else {
-                if (attrs & PARAM_ATTRIBUTE_IN) {
-                    outPut << "[In] ";
-                }
-                if (attrs & PARAM_ATTRIBUTE_OUT) {
-                    outPut << "[Out] ";
-                }
+            if (param->byref) {
+                if (param->attrs & PARAM_ATTRIBUTE_OUT) outPut << "out ";
+                else if (param->attrs & PARAM_ATTRIBUTE_IN) outPut << "in ";
+                else outPut << "ref ";
             }
-            auto parameter_class = il2cpp_class_from_type(param);
-            outPut << il2cpp_class_get_name(parameter_class) << " "
-                   << il2cpp_method_get_param_name(method, i);
-            outPut << ", ";
-        }
-        if (param_count > 0) {
-            outPut.seekp(-2, outPut.cur);
+            outPut << get_type_name(param) << " " << il2cpp_method_get_param_name(method, i);
+            if (i < param_count - 1) outPut << ", ";
         }
         outPut << ") { }\n";
 
-
-        //TODO GenericInstMethod
-        if(method->methodPointer == nullptr){
-            auto token = method->token;
-            auto pMethodList1 = GetMethodToList(token);
-            //判断取出的数据是否为空
-            if(pMethodList1 && !pMethodList1->empty()){
-                for(const auto& elem : *pMethodList1){
-                    std::string methodsrcname = il2cpp_method_get_name(method);
-
-                    methodsrcname.append(".");
-
-                    methodsrcname += get_method_space_name(elem->Spec);
-
-                    char szbuf[0x1000] = {0};
-                    sprintf(szbuf,"0x%08X",elem->offset);
-
-                    writeLog(szbuf);
-                    writeLog(methodsrcname);
-                }
+        // 处理泛型方法定义与其对应的具体实例 (RVA)
+        if (method->methodPointer == nullptr) {
+            // 使用优化后的哈希表查询该 Token 关联的所有泛型实例
+            auto range = m_methodMap->equal_range(method->token);
+            for (auto it = range.first; it != range.second; ++it) {
+                auto elem = it->second;
+                std::string specName = get_method_space_name(elem->Spec);
+                outPut << "\t// [GenericInstance] RVA: 0x" << std::hex << elem->offset << " Spec: " << specName << "\n";
             }
         }
-
     }
     return outPut.str();
 }
 
-std::string li2cpp::li2cppDumper::dumpStr() {
+/**
+ * 建立泛型方法表索引 (保留原有逻辑并加入哈希映射)
+ */
+std::string li2cpp::li2cppDumper::dumpGenericsMethod() {
+    if (!m_methodMap) return "";
+    m_methodMap->clear();
+
+    for (int32_t i = 0; i < m_pil2CppMetadataRegistration->genericMethodTableCount; i++) {
+        const Il2CppGenericMethodFunctionsDefinitions* genericMethodIndices = m_pil2CppMetadataRegistration->genericMethodTable + i;
+        if (genericMethodIndices && genericMethodIndices->genericMethodIndex < m_pil2CppMetadataRegistration->methodSpecsCount) {
+            const Il2CppMethodSpec *methodSpec = m_pil2CppMetadataRegistration->methodSpecs + genericMethodIndices->genericMethodIndex;
+            if (methodSpec && m_pIl2CppCodeRegistration->genericMethodPointersCount > genericMethodIndices->indices.methodIndex) {
+                const Il2CppMethodDefinition *methodDefinition = GetMethodDefinitionFromIndex(methodSpec->methodDefinitionIndex);
+                const Il2CppMethodPointer pMethodPointer = m_pIl2CppCodeRegistration->genericMethodPointers[genericMethodIndices->indices.methodIndex];
+
+                uint64_t offset = pMethodPointer ? (uint64_t)pMethodPointer - Getil2cppModuleBase() : 0;
+                if (methodDefinition) {
+                    auto p = std::make_shared<li2cpp::cMethodDefinitionAndMethodSpec>();
+                    p->Spec = methodSpec;
+                    p->offset = offset;
+                    p->Method = methodDefinition;
+
+                    // 1. 保留在原来的 list 里 (你使用的代码)
+                    m_methodList->push_back(p);
+                    // 2. 存入哈希表用于 dump_method 快速检索 (优化部分)
+                    m_methodMap->emplace(methodDefinition->token, p);
+                }
+            }
+        }
+    }
+    return "";
+}
+
+/**
+ * 遍历程序集进行总 Dump (改为实时流式写入)
+ */
+std::string li2cpp::li2cppDumper::dumpcs() {
+    auto domain = il2cpp_domain_get();
+    size_t size;
+    auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
+
+    for (size_t i = 0; i < size; ++i) {
+        auto image = il2cpp_assembly_get_image(assemblies[i]);
+        auto classCount = il2cpp_image_get_class_count(image);
+        const char* imageName = il2cpp_image_get_name(image);
+
+        for (int j = 0; j < classCount; ++j) {
+            auto klass = il2cpp_image_get_class(image, j);
+            if (!klass) continue;
+            auto type = il2cpp_class_get_type(const_cast<Il2CppClass *>(klass));
+
+            std::string content = "\n// Image: " + std::string(imageName) + dumpType(type);
+
+            // 实时写入文件，防止大项目 vector 爆内存
+            if (m_outDumpCs) m_outDumpCs->writeLine(content);
+        }
+    }
+    return "";
+}
+
+/**
+ * 辅助：获取方法定义的完整泛型空间名
+ */
+std::string li2cpp::li2cppDumper::get_method_space_name(const Il2CppMethodSpec* spec) {
+    if (!spec) return "";
+    const Il2CppMethodDefinition* methodDef = GetMethodDefinitionFromIndex(spec->methodDefinitionIndex);
+    if (!methodDef) return "";
+
+    const Il2CppTypeDefinition* typeDef = GetTypeDefinitionForIndex(methodDef->declaringType);
+    if (!typeDef) return "";
+
+    std::string className = GetStringFromIndex(typeDef->nameIndex);
+    size_t backtickPos = className.find_last_of('`');
+    if (backtickPos != std::string::npos) className = className.substr(0, backtickPos);
+
+    std::string classGenerics = get_method_generic_name(spec->classIndexIndex);
+    std::string methodGenerics = get_method_generic_name(spec->methodIndexIndex);
+
+    return className + classGenerics + "." + GetStringFromIndex(methodDef->nameIndex) + methodGenerics;
+}
+
+/**
+ * 辅助：获取泛型实例的具体参数字符串 <T...>
+ */
+std::string li2cpp::li2cppDumper::get_method_generic_name(GenericInstIndex index) {
+    if (index == kTypeIndexInvalid || index >= (GenericInstIndex)m_pil2CppMetadataRegistration->genericInstsCount) return "";
+    const Il2CppGenericInst* inst = m_pil2CppMetadataRegistration->genericInsts[index];
+    if (!inst || inst->type_argc == 0) return "";
+
+    std::string ret = "<";
+    for (uint32_t i = 0; i < inst->type_argc; ++i) {
+        if (i > 0) ret += ", ";
+        ret += get_type_name(inst->type_argv[i]);
+    }
+    ret += ">";
+    return ret;
+}
+
+/**
+ * 属性 Dump
+ * 支持泛型属性类型解析
+ */
+std::string li2cpp::li2cppDumper::dump_property(Il2CppClass *klass) {
+    std::stringstream outPut;
+    outPut << "\n\t// Properties\n";
+    void *iter = nullptr;
+    while (auto prop_const = il2cpp_class_get_properties(klass, &iter)) {
+        // 部分 Il2Cpp 版本返回的是 const，需要转换以调用获取方法
+        auto prop = const_cast<PropertyInfo *>(prop_const);
+        auto get = il2cpp_property_get_get_method(prop);
+        auto set = il2cpp_property_get_set_method(prop);
+        auto prop_name = il2cpp_property_get_name(prop);
+
+        outPut << "\t";
+        const Il2CppType* prop_type = nullptr;
+        uint32_t iflags = 0;
+
+        // 确定属性类型：优先从 get 方法获取返回类型，否则从 set 方法获取第一个参数类型
+        if (get) {
+            outPut << get_method_modifier(il2cpp_method_get_flags(get, &iflags));
+            prop_type = il2cpp_method_get_return_type(get);
+        } else if (set) {
+            outPut << get_method_modifier(il2cpp_method_get_flags(set, &iflags));
+            prop_type = il2cpp_method_get_param(set, 0);
+        }
+
+        if (prop_type) {
+            outPut << get_type_name(prop_type) << " " << prop_name << " { ";
+            if (get) outPut << "get; ";
+            if (set) outPut << "set; ";
+            outPut << "}\n";
+        }
+    }
+    return outPut.str();
+}
+
+/**
+ * 方法修饰符解析
+ * 将 Il2Cpp 的 MethodAttributes 转换为 C# 关键字
+ */
+std::string li2cpp::li2cppDumper::get_method_modifier(uint32_t flags) {
     std::stringstream outPut;
 
-    for (size_t i = 0; i < m_pil2CppMetadataRegistration->metadataUsagesCount; i++){
-
-        uintptr_t* metadataPointer = reinterpret_cast<uintptr_t*>(m_pil2CppMetadataRegistration->metadataUsages[i]);
-        if(metadataPointer) {
-
-            Il2CppMetadataUsage usage = GetEncodedIndexType(static_cast<uint32_t>(*metadataPointer));
-            switch (usage) {
-                case kIl2CppMetadataUsageTypeInfo:
-                case kIl2CppMetadataUsageMethodDef:
-                case kIl2CppMetadataUsageMethodRef:
-                    dump_RuntimeMetadata(metadataPointer);
-                    break;
-                default:
-                    break;
-            }
-        }
+    // 1. 访问权限
+    auto access = flags & METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK;
+    switch (access) {
+        case METHOD_ATTRIBUTE_PRIVATE: outPut << "private "; break;
+        case METHOD_ATTRIBUTE_PUBLIC:  outPut << "public "; break;
+        case METHOD_ATTRIBUTE_FAMILY:  outPut << "protected "; break;
+        case METHOD_ATTRIBUTE_FAM_AND_ASSEM: outPut << "private protected "; break;
+        case METHOD_ATTRIBUTE_FAM_OR_ASSEM:  outPut << "protected internal "; break;
+        default:                       outPut << "internal "; break;
     }
+
+    // 2. 静态修饰符
+    if (flags & METHOD_ATTRIBUTE_STATIC) outPut << "static ";
+
+    // 3. 虚函数/抽象/重写逻辑
+    if (flags & METHOD_ATTRIBUTE_ABSTRACT) {
+        outPut << "abstract ";
+        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT) outPut << "override ";
+    } else if (flags & METHOD_ATTRIBUTE_VIRTUAL) {
+        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_NEW_SLOT) outPut << "virtual ";
+        else outPut << "override ";
+    }
+
+    // 4. 外部调用
+    if (flags & METHOD_ATTRIBUTE_PINVOKE_IMPL) outPut << "extern ";
 
     return outPut.str();
 }
 
+/**
+ * 字符串常量 Dump
+ * 遍历元数据中的 StringLiteral
+ */
+std::string li2cpp::li2cppDumper::dumpStr() {
+    writeLog("Dumping String Literals...");
+
+    for (size_t i = 0; i < m_pil2CppMetadataRegistration->metadataUsagesCount; i++) {
+        uintptr_t* metadataPointer = reinterpret_cast<uintptr_t*>(m_pil2CppMetadataRegistration->metadataUsages[i]);
+        if (metadataPointer) {
+            // 调用你原有的运行时元数据解析逻辑
+            dump_RuntimeMetadata(metadataPointer);
+        }
+    }
+
+    // 写入完成后，如果需要在控制台显示统计，可以在这里处理
+    return "";
+}
+
+/**
+ * 运行时元数据具体解析逻辑 (保留你原有的 encodedToken 处理)
+ */
 std::string li2cpp::li2cppDumper::dump_RuntimeMetadata(uintptr_t *metadataPointer) {
     std::string pstring = "";
-    do {
-        if(!metadataPointer){
-            break;
+    if (!metadataPointer) return pstring;
+
+    // 获取指针指向的 encodedToken
+    uintptr_t metadataValue = *metadataPointer;
+    uint32_t encodedToken = static_cast<uint32_t>(metadataValue);
+
+    // 解码 Token 类型和索引
+    Il2CppMetadataUsage usage = GetEncodedIndexType(encodedToken);
+    uint32_t decodedIndex = GetDecodedMethodIndex(encodedToken);
+
+    // 仅处理字符串字面量
+    if (usage == kIl2CppMetadataUsageStringLiteral) {
+        // 使用 il2cpp 内部转换函数
+        pstring = il2cpp_Il2CppString_toCString(GetStringLiteralFromIndex(decodedIndex));
+
+        if (m_kIl2CppMetadataUsageStringLiteral) {
+            // 存入 Map 并实时写入文件 (可选)
+            m_kIl2CppMetadataUsageStringLiteral->insert({(int)decodedIndex, pstring});
+            if (m_outDumpstr) {
+                m_outDumpstr->writeLine(pstring);
+            }
         }
-        uintptr_t metadataValue = *(intptr_t*)metadataPointer;
-        uint32_t encodedToken = static_cast<uint32_t>(metadataValue);
-        Il2CppMetadataUsage usage = GetEncodedIndexType(encodedToken);
-        uint32_t decodedIndex = GetDecodedMethodIndex(encodedToken);
-        switch (usage)
-        {
-            case kIl2CppMetadataUsageTypeInfo:
-                break;
-            case kIl2CppMetadataUsageIl2CppType:
-                break;
-            case kIl2CppMetadataUsageMethodDef:
-            case kIl2CppMetadataUsageMethodRef:
-                break;
-            case kIl2CppMetadataUsageFieldInfo:
-                break;
-            case kIl2CppMetadataUsageStringLiteral:
-                pstring = il2cpp_Il2CppString_toCString(GetStringLiteralFromIndex(decodedIndex));
-                if(m_kIl2CppMetadataUsageStringLiteral){
-                    m_kIl2CppMetadataUsageStringLiteral->insert(std::pair<int,std::string>(decodedIndex,pstring));
-                }
-                break;
-            case kIl2CppMetadataUsageFieldRva:
-                break;
-            case kIl2CppMetadataUsageInvalid:
-                break;
-        }
-    }while(0);
+    }
     return pstring;
 }
 
+/**
+ * 日志记录函数
+ * 负责将调试信息写入到 /data/data/com.DefaultCompany.Demo1/cache/log.cs
+ */
 bool li2cpp::li2cppDumper::writeLog(std::string str) {
-    std::string out = "[SFK] : ";
-    out+=str;
+    if (m_outlog == nullptr) {
+        return false;
+    }
+
+    // 格式化输出，增加标识前缀
+    std::string out = "[SFK] : " + str;
+
+    // 调用你文件类 cMyfile 的接口写入一行
     m_outlog->writeLine(out.c_str());
+
+    // 实时冲刷缓冲区，防止日志丢失
     m_outlog->flush();
+
     return true;
-}
-
-std::string li2cpp::li2cppDumper::dumpcs() {
-    std::string pstring = "";
-    do {
-
-        LOG(LOG_LEVEL_ERROR,"dumping...");
-        size_t size;
-        auto domain = il2cpp_domain_get();
-        auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
-
-        std::stringstream imageOutput;
-
-        //遍历获取程序集（SO）名称
-        for (int i = 0; i < size; ++i) {
-            auto image = il2cpp_assembly_get_image(assemblies[i]);
-            imageOutput << "// Image " << i << ": " << il2cpp_image_get_name(image) << "\n";
-        }
-
-        //遍历每个程序集（SO）的数据情况
-        LOG(LOG_LEVEL_INFO,"Version greater than 2023.3");
-        for (int i = 0; i < size; ++i) {
-            auto image = il2cpp_assembly_get_image(assemblies[i]);
-            std::stringstream imageStr;
-            imageStr << "\n// Dll : " << il2cpp_image_get_name(image);
-            auto classCount = il2cpp_image_get_class_count(image);
-
-            for (int j = 0; j < classCount; ++j) {
-                auto klass = il2cpp_image_get_class(image, j);
-                auto type = il2cpp_class_get_type(const_cast<Il2CppClass *>(klass));
-                //LOGD("type name : %s", il2cpp_type_get_name(type));
-                auto outPut = imageStr.str() + dumpType(type);
-                m_outPuts->push_back(outPut);
-            }
-        }
-        return pstring;
-    }while(0);
-    return pstring;
-}
-
-std::string li2cpp::li2cppDumper::dumpGenericsMethod() {
-    //参考 GetMethodInfoFromMethodDefinitionIndex
-    std::string pstring = "";
-
-    for (int32_t i = 0; i < m_pil2CppMetadataRegistration->genericMethodTableCount; i++){
-
-        const Il2CppGenericMethodFunctionsDefinitions* genericMethodIndices = m_pil2CppMetadataRegistration->genericMethodTable+i;
-
-        if(genericMethodIndices && genericMethodIndices->genericMethodIndex < m_pil2CppMetadataRegistration->methodSpecsCount) {
-
-            const Il2CppMethodSpec *methodSpec = m_pil2CppMetadataRegistration->methodSpecs+genericMethodIndices->genericMethodIndex;
-
-            if(methodSpec && m_pIl2CppCodeRegistration->genericMethodPointersCount>genericMethodIndices->indices.methodIndex) {
-
-                const Il2CppMethodDefinition *methodDefinition = GetMethodDefinitionFromIndex(
-                        methodSpec->methodDefinitionIndex);
-
-                const Il2CppMethodPointer *pMethodPointer = &m_pIl2CppCodeRegistration->genericMethodPointers[genericMethodIndices->indices.methodIndex];
-
-                uint64_t offset = 0;
-                if (pMethodPointer) {
-                    offset = (uint64_t) ((uint64_t) pMethodPointer - Getil2cppModuleBase());
-                }
-
-                if (methodSpec && methodDefinition) {
-                    if (m_methodList) {
-                        auto p = std::make_shared<li2cpp::cMethodDefinitionAndMethodSpec>();
-
-                        p->Spec = methodSpec;
-                        p->offset = offset;
-                        p->Method = methodDefinition;
-
-                        m_methodList->push_back(p);
-                    }
-                }
-            }
-        }
-    }
-    return pstring;
-}
-
-std::shared_ptr<std::list<std::shared_ptr<li2cpp::cMethodDefinitionAndMethodSpec>>>
-li2cpp::li2cppDumper::GetMethodToList(uint32_t Token) {
-
-    //申请一个链表 用于返回
-    std::shared_ptr<std::list<std::shared_ptr<li2cpp::cMethodDefinitionAndMethodSpec>>> plist =
-            std::make_shared<std::list<std::shared_ptr<li2cpp::cMethodDefinitionAndMethodSpec>>>();
-
-    //判断要查找的链表是否为空
-    if(m_methodList && !m_methodList->empty()){
-        //遍历链表查找一样的 Token 值加入到链表中并返回
-        for (const auto&elem :*m_methodList) {
-
-            const Il2CppMethodDefinition *methodDefinition = GetMethodDefinitionFromIndex(
-                    elem->Spec->methodDefinitionIndex);
-
-            if(methodDefinition->token == Token){
-                plist->push_back(elem);
-            }
-        }
-    }
-    return plist;
-}
-
-
-std::string li2cpp::li2cppDumper::get_method_space_name(const Il2CppMethodSpec* spec){
-
-    std::string retstr = "";
-    do{
-        if(spec == nullptr){
-            break;
-        }
-
-        const Il2CppMethodDefinition* pmethode = GetMethodDefinitionFromIndex(spec->methodDefinitionIndex);
-        if(pmethode == nullptr){
-            break;
-        }
-
-        const Il2CppTypeDefinition * pmethodetype = GetTypeDefinitionForIndex(pmethode->declaringType);
-        if(pmethodetype == nullptr){
-            break;
-        }
-
-        retstr = get_method_space_class_name(pmethodetype->nameIndex,spec->methodIndexIndex);
-
-    }while(0);
-
-    return retstr;
-}
-
-std::string li2cpp::li2cppDumper::get_method_space_class_name(StringIndex stringIndex,
-                                                              GenericInstIndex genericInstIndex) {
-    std::string retstr = GetStringFromIndex(stringIndex);
-
-    retstr+=".";
-
-    if(retstr.empty()){
-        return retstr;
-    }
-
-    do {
-        //判断是否是泛型函数 并移除`
-        size_t backtickPos = retstr.find_last_of('`');
-        if (backtickPos != std::string::npos) {
-            retstr = retstr.substr(0, backtickPos);
-            std::string genericename = get_method_generic_name(genericInstIndex);
-            if (genericename.empty()) {
-                break;
-            }
-            retstr+=genericename;
-        }
-    }while(0);
-    return retstr;
-}
-
-/*
-std::string li2cpp::li2cppDumper::get_method_generic_name(GenericInstIndex genericInstIndex) {
-
-    std::string retstr = "";
-
-    do {
-        if(genericInstIndex == kTypeIndexInvalid){
-            break;
-        }
-
-        IL2CPP_ASSERT(genericInstIndex < m_pil2CppMetadataRegistration->genericInstsCount);
-        const Il2CppGenericInst *classInst = m_pil2CppMetadataRegistration->genericInsts[genericInstIndex];
-        if(classInst == nullptr){
-            break;
-        }
-
-        retstr.append("<");
-        for (uint32_t i = 0; i < classInst->type_argc; ++i){
-            //获取类类型
-            const Il2CppType * pil2cctype = classInst->type_argv[i];
-            if(pil2cctype == nullptr){
-                continue;
-            }
-
-            const char* pGenerictypename =  il2cpp_type_get_name(pil2cctype);
-            if(pGenerictypename == nullptr){
-                break;
-            }
-            retstr.append(pGenerictypename);
-
-            if(i != classInst->type_argc-1){
-                retstr.append(",");
-            }
-        }
-        retstr.append(">");
-    }while(0);
-    return retstr;
-}
-*/
-
-std::string li2cpp::li2cppDumper::get_method_generic_name(GenericInstIndex genericInstIndex)
-{
-    if (genericInstIndex == kTypeIndexInvalid)
-        return "";
-
-    IL2CPP_ASSERT(genericInstIndex < m_pil2CppMetadataRegistration->genericInstsCount);
-
-    const Il2CppGenericInst* inst =
-            m_pil2CppMetadataRegistration->genericInsts[genericInstIndex];
-
-    if (!inst || inst->type_argc == 0)
-        return "";
-
-    std::string ret;
-    ret.append("<");
-
-    for (uint32_t i = 0; i < inst->type_argc; ++i)
-    {
-        ret.append(get_type_name(inst->type_argv[i]));
-        if (i + 1 < inst->type_argc)
-            ret.append(", ");
-    }
-
-    ret.append(">");
-
-    return ret;
 }
