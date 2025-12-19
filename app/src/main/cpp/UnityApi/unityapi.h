@@ -84,6 +84,8 @@ namespace li2cppApi {
         const Il2CppGenericInst * il2cpp_generic_context_get_generic_class_inst(const Il2CppGenericContext* context);
         const Il2CppTypeDefinition* GetTypeDefinitionForIndex(TypeDefinitionIndex index);
         const char* il2cpp_type_get_name(const Il2CppType *type);
+        int il2cpp_class_get_rank(const Il2CppClass *klass); //获取数组的维度
+        Il2CppClass* il2cpp_type_get_class_or_element_class(const Il2CppType *type);
     public:
         template<typename T>
         static inline bool IsRuntimeMetadataInitialized(T item);

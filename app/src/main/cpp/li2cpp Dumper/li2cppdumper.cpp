@@ -75,16 +75,22 @@ bool li2cpp::li2cppDumper::initInfo() {
  */
 std::string li2cpp::li2cppDumper::get_type_name(const Il2CppType* type) {
     if (!type) return "void";
-    std::string suffix = type->byref ? "&" : "";
+    std::string suffix = il2cpp_type_is_byref(type) ? "&" : "";
+
+    Il2CppClass* klass = il2cpp_class_from_type(type);
+
 
     // 处理数组 (SZARRAY 一维, ARRAY 多维)
     if (type->type == IL2CPP_TYPE_SZARRAY) {
         return get_type_name(type->data.type) + "[]" + suffix;
     } else if (type->type == IL2CPP_TYPE_ARRAY) {
+        int rank = klass?il2cpp_class_get_rank(klass):type->data.array->rank;
         std::string rankStr = "[";
-        for (int i = 1; i < type->data.array->rank; i++) rankStr += ",";
+        for (int i = 1; i < rank; i++) rankStr += ",";
         rankStr += "]";
-        return get_type_name(type->data.array->etype) + rankStr + suffix;
+
+        return get_type_name(il2cpp_class_get_type(il2cpp_type_get_class_or_element_class(type)));
+        //return get_type_name(type->data.array->etype) + rankStr + suffix;
     }
 
     switch (type->type) {
@@ -102,7 +108,6 @@ std::string li2cpp::li2cppDumper::get_type_name(const Il2CppType* type) {
         default: break;
     }
 
-    Il2CppClass* klass = il2cpp_class_from_type(type);
     if (!klass) return "unknown" + suffix;
 
     std::string typeName = il2cpp_class_get_name(klass);

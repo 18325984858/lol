@@ -22,7 +22,7 @@ li2cppApi::cUnityApi::cUnityApi(void*dqil2cppBase,
         m_pil2CppMetadataRegistration(pMetadataRegistration),
         m_pGlobalMetadataHeader(pGlobalMetadataHeader),
         m_pMetadataImagesTable(pMetadataImagesTable)
-                                {
+{
     if(m_li2cppso == nullptr){
         m_li2cppso = std::make_shared<Symbol::Symbol>("libil2cpp.so");
     }
@@ -153,6 +153,21 @@ const Il2CppType *li2cppApi::cUnityApi::il2cpp_class_get_type(Il2CppClass *klass
         }
     }
     return m_ppil2cpp_class_get_type(klass);
+}
+
+Il2CppClass* li2cppApi::cUnityApi::il2cpp_type_get_class_or_element_class(const Il2CppType *type) {
+    //il2cpp_type_get_class_or_element_class函数指针
+    typedef Il2CppClass* (*pil2cpp_type_get_class_or_element_class)(const Il2CppType *type);
+    static pil2cpp_type_get_class_or_element_class m_ppil2cpp_type_get_class_or_element_class = nullptr;
+
+    if(m_ppil2cpp_type_get_class_or_element_class == nullptr){
+        m_ppil2cpp_type_get_class_or_element_class = (pil2cpp_type_get_class_or_element_class) m_li2cppso->find(
+                "il2cpp_type_get_class_or_element_class");
+        if (m_ppil2cpp_type_get_class_or_element_class) {
+            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_type_get_class_or_element_class);
+        }
+    }
+    return m_ppil2cpp_type_get_class_or_element_class(type);
 }
 
 size_t li2cppApi::cUnityApi::il2cpp_image_get_class_count(const Il2CppImage *image) {
@@ -453,56 +468,56 @@ li2cppApi::cUnityApi::il2cpp_class_get_properties(Il2CppClass *klass, void **ite
 // =========================================================================
 // 1. const MethodInfo* il2cpp_property_get_get_method(PropertyInfo *prop)
 // =========================================================================
-        const MethodInfo* li2cppApi::cUnityApi::il2cpp_property_get_get_method(PropertyInfo *prop) {
-            // 1. 定义函数指针类型
-            typedef const MethodInfo* (*pil2cpp_property_get_get_method)(PropertyInfo *prop);
+const MethodInfo* li2cppApi::cUnityApi::il2cpp_property_get_get_method(PropertyInfo *prop) {
+    // 1. 定义函数指针类型
+    typedef const MethodInfo* (*pil2cpp_property_get_get_method)(PropertyInfo *prop);
 
-            // 2. 静态存储函数指针
-            static pil2cpp_property_get_get_method m_ppil2cpp_property_get_get_method = nullptr;
+    // 2. 静态存储函数指针
+    static pil2cpp_property_get_get_method m_ppil2cpp_property_get_get_method = nullptr;
 
-            // 3. 首次调用时查找函数地址
-            if (m_ppil2cpp_property_get_get_method == nullptr) {
-                m_ppil2cpp_property_get_get_method = (pil2cpp_property_get_get_method)m_li2cppso->find(
-                        "il2cpp_property_get_get_method");
+    // 3. 首次调用时查找函数地址
+    if (m_ppil2cpp_property_get_get_method == nullptr) {
+        m_ppil2cpp_property_get_get_method = (pil2cpp_property_get_get_method)m_li2cppso->find(
+                "il2cpp_property_get_get_method");
 
-                if (m_ppil2cpp_property_get_get_method) {
-                    // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_property_get_get_method);
-                }
-            }
-
-            // 4. 调用原始函数
-            if (m_ppil2cpp_property_get_get_method) {
-                return m_ppil2cpp_property_get_get_method(prop);
-            }
-            return nullptr;
+        if (m_ppil2cpp_property_get_get_method) {
+            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_property_get_get_method);
         }
+    }
+
+    // 4. 调用原始函数
+    if (m_ppil2cpp_property_get_get_method) {
+        return m_ppil2cpp_property_get_get_method(prop);
+    }
+    return nullptr;
+}
 
 // =========================================================================
 // 2. const MethodInfo* il2cpp_property_get_set_method(PropertyInfo *prop)
 // =========================================================================
-        const MethodInfo* li2cppApi::cUnityApi::il2cpp_property_get_set_method(PropertyInfo *prop) {
-            // 1. 定义函数指针类型
-            typedef const MethodInfo* (*pil2cpp_property_get_set_method)(PropertyInfo *prop);
+const MethodInfo* li2cppApi::cUnityApi::il2cpp_property_get_set_method(PropertyInfo *prop) {
+    // 1. 定义函数指针类型
+    typedef const MethodInfo* (*pil2cpp_property_get_set_method)(PropertyInfo *prop);
 
-            // 2. 静态存储函数指针
-            static pil2cpp_property_get_set_method m_ppil2cpp_property_get_set_method = nullptr;
+    // 2. 静态存储函数指针
+    static pil2cpp_property_get_set_method m_ppil2cpp_property_get_set_method = nullptr;
 
-            // 3. 首次调用时查找函数地址
-            if (m_ppil2cpp_property_get_set_method == nullptr) {
-                m_ppil2cpp_property_get_set_method = (pil2cpp_property_get_set_method)m_li2cppso->find(
-                        "il2cpp_property_get_set_method");
+    // 3. 首次调用时查找函数地址
+    if (m_ppil2cpp_property_get_set_method == nullptr) {
+        m_ppil2cpp_property_get_set_method = (pil2cpp_property_get_set_method)m_li2cppso->find(
+                "il2cpp_property_get_set_method");
 
-                if (m_ppil2cpp_property_get_set_method) {
-                    // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_property_get_set_method);
-                }
-            }
-
-            // 4. 调用原始函数
-            if (m_ppil2cpp_property_get_set_method) {
-                return m_ppil2cpp_property_get_set_method(prop);
-            }
-            return nullptr;
+        if (m_ppil2cpp_property_get_set_method) {
+            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_property_get_set_method);
         }
+    }
+
+    // 4. 调用原始函数
+    if (m_ppil2cpp_property_get_set_method) {
+        return m_ppil2cpp_property_get_set_method(prop);
+    }
+    return nullptr;
+}
 
 
 // =========================================================================
@@ -810,7 +825,7 @@ Il2CppString *li2cppApi::cUnityApi::GetStringLiteralFromIndex(StringLiteralIndex
         return NULL;
 
     const Il2CppStringLiteral* stringLiteral = (const Il2CppStringLiteral*)
-            ((const char*)m_pGlobalMetadata + m_pGlobalMetadataHeader->stringLiteralOffset) + index;
+                                                       ((const char*)m_pGlobalMetadata + m_pGlobalMetadataHeader->stringLiteralOffset) + index;
 
     Il2CppString* newString = il2cpp_string_new_len(
             (const char*)m_pGlobalMetadata + m_pGlobalMetadataHeader->stringLiteralDataOffset + stringLiteral->dataIndex
@@ -870,6 +885,25 @@ const char *li2cppApi::cUnityApi::il2cpp_type_get_name(const Il2CppType *type) {
     }
     return nullptr; // 找不到函数时返回安全值 ""
 }
+
+int li2cppApi::cUnityApi::il2cpp_class_get_rank(const Il2CppClass *klass){
+
+    typedef int (*pil2cpp_class_get_rank)(const Il2CppClass *klass);
+    static pil2cpp_class_get_rank m_ppil2cpp_class_get_rank = nullptr;
+    if (m_ppil2cpp_class_get_rank == nullptr) {
+        m_ppil2cpp_class_get_rank = (pil2cpp_class_get_rank)m_li2cppso->find(
+                "il2cpp_class_get_rank");
+        if (m_ppil2cpp_class_get_rank) {
+            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_class_get_rank);
+        }
+    }
+    // 4. 调用原始函数
+    if (m_ppil2cpp_class_get_rank) {
+        return m_ppil2cpp_class_get_rank(klass);
+    }
+    return 0; // 找不到函数时返回安全值 ""
+}
+
 
 std::string li2cppApi::cUnityApi::Utf16ToUtf8(const Il2CppChar *utf16String) {
     return Utf16ToUtf8(utf16String,-1);
@@ -963,7 +997,7 @@ std::string li2cppApi::cUnityApi::Utf16ToUtf8(const Il2CppChar *utf16String, int
 }
 
 std::string li2cppApi::cUnityApi::il2cpp_Il2CppString_toCString(const Il2CppString *pstr) {
- return Utf16ToUtf8(pstr->chars,pstr->length);
+    return Utf16ToUtf8(pstr->chars,pstr->length);
 }
 
 const Il2CppGenericMethod *
