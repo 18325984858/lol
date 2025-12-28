@@ -8,6 +8,8 @@
 #include <vector>
 #include <iomanip>
 #include <unordered_map>
+#include <android/log.h>
+
 
 li2cpp::li2cppDumper::li2cppDumper(void* dqil2cppBase,
                                    void *pCodeRegistration,
@@ -77,7 +79,7 @@ std::string li2cpp::li2cppDumper::get_type_name(const Il2CppType* type) {
     if (!type) return "void";
     std::string suffix = il2cpp_type_is_byref(type) ? "&" : "";
 
-    Il2CppClass* klass = il2cpp_class_from_type(type);
+     Il2CppClass* klass = il2cpp_class_from_type(type);
 
 
     // 处理数组 (SZARRAY 一维, ARRAY 多维)
@@ -142,7 +144,7 @@ std::string li2cpp::li2cppDumper::get_type_name(const Il2CppType* type) {
 /**
  * 类定义解析
  */
-std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type) {
+std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type, int classIndex) {
     std::stringstream outPut;
     auto *klass = il2cpp_class_from_type(type);
     if (!klass) return "";
@@ -174,6 +176,11 @@ std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type) {
     else outPut << "class ";
 
     outPut << get_type_name(type);
+    if (classIndex >= 0) {
+        outPut << " // TypeDefIndex : " << classIndex;
+    }
+
+
 
     // 继承与接口
     std::vector<std::string> extends;
@@ -337,7 +344,7 @@ std::string li2cpp::li2cppDumper::dumpcs() {
             if (!klass) continue;
             auto type = il2cpp_class_get_type(const_cast<Il2CppClass *>(klass));
 
-            std::string content = "\n// Image: " + std::string(imageName) + dumpType(type);
+            std::string content = "\n// Image: " + std::string(imageName) + dumpType(type, j);
 
             // 实时写入文件，防止大项目 vector 爆内存
             if (m_outDumpCs) m_outDumpCs->writeLine(content);

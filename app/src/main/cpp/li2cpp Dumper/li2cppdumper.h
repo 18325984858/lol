@@ -34,7 +34,7 @@ namespace li2cpp {
     public:
         bool initInfo();
         std::string dumpcs();
-        std::string dumpType(const Il2CppType *type);
+        std::string dumpType(const Il2CppType *type, int classIndex = -1);
         std::string dump_field(Il2CppClass *klass);
         std::string dump_property(Il2CppClass *klass);
         std::string get_method_modifier(uint32_t flags);

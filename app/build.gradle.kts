@@ -4,9 +4,8 @@ plugins {
 
 android {
     namespace = "com.example.dobbyproject"
-    compileSdk {
-        version = release(36)
-    }
+    // 注意：建议确认 SDK 36 是否已正式发布，通常当前稳定版为 34 或 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.dobbyproject"
@@ -16,7 +15,23 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // 建议明确指定 ABI，确保只生成你需要的架构（比如 arm64）
+        externalNativeBuild {
+            cmake {
+                abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
+            }
+        }
     }
+
+    // --- 添加以下这段配置 ---
+    packaging {
+        jniLibs {
+            // 强制将 SO 文件解压缩到 lib 目录，而不是留在 APK 中
+            useLegacyPackaging = true
+        }
+    }
+    // -----------------------
 
     buildTypes {
         release {
@@ -27,16 +42,19 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
         }
     }
+
     buildFeatures {
         viewBinding = true
     }
