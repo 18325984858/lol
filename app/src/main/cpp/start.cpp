@@ -12,12 +12,14 @@
 bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
                   void *pGlobalMetadataHeader,void*pMetadataImagesTable){
     try {
+
+        if(pli2cppModeBase == nullptr){
+            return false;
+        }
+
         //li2cpp::li2cppDumper li2CppDumperInfo(0,0,0,0,0);
         // 1. 创建对象并初始化
         // 这一步可能会因为构造函数内部的内存分配失败等原因抛出异常
-
-        LOG(LOG_LEVEL_INFO,"genericMethodTable : %d",offsetof(Il2CppMetadataRegistration,genericMethodTable));
-
         li2cpp::li2cppDumper li2CppDumperInfo(
                 pli2cppModeBase,
                 pCodeRegistration,
@@ -25,7 +27,6 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
                 pGlobalMetadataHeader,
                 pMetadataImagesTable
         );
-
 
         // 2. 初始化信息
         // 这一步是您的主要操作，如果发生错误（如空指针解引用），

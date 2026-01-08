@@ -5,6 +5,7 @@
 #ifndef DOBBY_PROJECT_LI2CPPDUMPER_H
 #define DOBBY_PROJECT_LI2CPPDUMPER_H
 
+
 #include "../UnityApi/unityapi.h"
 #include "../File/file.h"
 #include <map>
@@ -46,6 +47,9 @@ namespace li2cpp {
         std::string get_method_space_name(const Il2CppMethodSpec* spec);
         std::string get_method_generic_name(GenericInstIndex genericInstIndex);
 
+    private:
+        void initPackPath(std::string strPackName);
+
     public:
         // 保留你原有的接口
         std::shared_ptr<std::list<std::shared_ptr<li2cpp::cMethodDefinitionAndMethodSpec>>> GetMethodToList(uint32_t Token);
@@ -60,16 +64,16 @@ namespace li2cpp {
         bool writeLog(std::string str);
 
     private:
-        const std::string m_pathlog = "/data/data/com.DefaultCompany.Demo1/cache/log.cs";
+        std::string m_pathlog = "";
         std::shared_ptr<cMyfile> m_outlog = nullptr;
 
     private:
-        const std::string m_pathDumpCs = "/data/data/com.DefaultCompany.Demo1/cache/dumpcs.cs";
+        std::string m_pathDumpCs = "";
         std::shared_ptr<cMyfile> m_outDumpCs = nullptr;
         std::shared_ptr<std::vector<std::string>> m_outPuts = nullptr;
 
     private:
-        const std::string m_pathDumpstr = "/data/data/com.DefaultCompany.Demo1/cache/dumpstr.cs";
+        std::string m_pathDumpstr = "";
         std::shared_ptr<cMyfile> m_outDumpstr = nullptr;
         std::shared_ptr<std::map<int,std::string>> m_kIl2CppMetadataUsageStringLiteral = nullptr;
     };

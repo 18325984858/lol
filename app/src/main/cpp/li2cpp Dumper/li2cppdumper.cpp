@@ -22,6 +22,8 @@ li2cpp::li2cppDumper::li2cppDumper(void* dqil2cppBase,
                              static_cast<Il2CppGlobalMetadataHeader *>(pGlobalMetadataHeader),
                              static_cast<Il2CppImageGlobalMetadata *>(pMetadataImagesTable)) {
 
+    initPackPath("com.tencent.lolm");
+
     // 初始化文件输出流
     auto initFile = [&](std::shared_ptr<cMyfile>& file, const std::string& path) {
         if (file == nullptr) {
@@ -40,7 +42,7 @@ li2cpp::li2cppDumper::li2cppDumper(void* dqil2cppBase,
 
     // 初始化方法索引表 (保留你原有追踪逻辑的同时，提升查询效率)
     if (m_methodList == nullptr) m_methodList = std::make_shared<std::list<std::shared_ptr<cMethodDefinitionAndMethodSpec>>>();
-    m_methodMap = std::make_shared<std::unordered_multimap<uint32_t, std::shared_ptr<cMethodDefinitionAndMethodSpec>>>();
+    if(m_methodMap == nullptr) m_methodMap = std::make_shared<std::unordered_multimap<uint32_t, std::shared_ptr<cMethodDefinitionAndMethodSpec>>>();
 }
 
 li2cpp::li2cppDumper::~li2cppDumper() {
@@ -49,16 +51,41 @@ li2cpp::li2cppDumper::~li2cppDumper() {
     if (m_outDumpstr) { m_outDumpstr->flush(); m_outDumpstr->closeFile(); }
     if (m_outlog) { m_outlog->flush(); m_outlog->closeFile(); }
 
-    m_methodList = nullptr;
-    m_outPuts = nullptr;
+    if(m_kIl2CppMetadataUsageStringLiteral){
+
+        for (auto& it : *this->m_kIl2CppMetadataUsageStringLiteral) {
+            it.second = nullptr;
+        }
+
+        m_kIl2CppMetadataUsageStringLiteral->clear();
+        m_kIl2CppMetadataUsageStringLiteral = nullptr;
+    }
+
+    if(m_methodMap){
+        for (auto& it : *this->m_methodMap) {
+            it.second = nullptr;
+        }
+        m_methodMap->clear();
+        m_methodMap = nullptr;
+    }
+
+    if(m_methodList){
+        m_methodList->clear();
+        m_methodList = nullptr;
+    }
+
+    if(m_outPuts){
+        m_outPuts->clear();
+        m_outPuts = nullptr;
+    }
 }
 
 bool li2cpp::li2cppDumper::initInfo() {
     if (m_pGlobalMetadataHeader == nullptr || m_pil2CppMetadataRegistration == nullptr) return false;
 
     char szbuf[0x1000] = {0};
-    sprintf(szbuf, "genericClassesCount : %d", m_pil2CppMetadataRegistration->genericClassesCount); writeLog(szbuf);
-    sprintf(szbuf, "typesCount : %d", m_pil2CppMetadataRegistration->typesCount); writeLog(szbuf);
+    //sprintf(szbuf, "genericClassesCount : %d", m_pil2CppMetadataRegistration->genericClassesCount); writeLog(szbuf);
+    //sprintf(szbuf, "typesCount : %d", m_pil2CppMetadataRegistration->typesCount); writeLog(szbuf);
 
     // 1. 预处理：建立泛型方法哈希表 (保留并优化你的 dumpGenericsMethod)
     dumpGenericsMethod();
@@ -67,7 +94,7 @@ bool li2cpp::li2cppDumper::initInfo() {
     dumpcs();
 
     // 3. 导出字符串
-    dumpStr();
+    //dumpStr();
 
     return true;
 }
@@ -180,8 +207,6 @@ std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type, int classInde
         outPut << " // TypeDefIndex : " << classIndex;
     }
 
-
-
     // 继承与接口
     std::vector<std::string> extends;
     auto parent = il2cpp_class_get_parent(klass);
@@ -252,6 +277,8 @@ std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
     outPut << "\n\t// Methods\n";
     void *iter = nullptr;
     while (auto method = il2cpp_class_get_methods(klass, &iter)) {
+
+
         if (method->methodPointer) {
             outPut << "\t// RVA: 0x" << std::hex << (uint64_t)method->methodPointer - Getil2cppModuleBase()
                    << " VA: 0x" << (uint64_t)method->methodPointer << "\n";
@@ -279,6 +306,7 @@ std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
         }
         outPut << ") { }\n";
 
+        LOG(LOG_LEVEL_INFO,"method->methodPointer ： %p",method->methodPointer);
         // 处理泛型方法定义与其对应的具体实例 (RVA)
         if (method->methodPointer == nullptr) {
             // 使用优化后的哈希表查询该 Token 关联的所有泛型实例
@@ -299,6 +327,7 @@ std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
 std::string li2cpp::li2cppDumper::dumpGenericsMethod() {
     if (!m_methodMap) return "";
     m_methodMap->clear();
+    LOG(LOG_LEVEL_INFO,"genericMethodTableCount : %d",m_pil2CppMetadataRegistration->genericMethodTableCount);
 
     for (int32_t i = 0; i < m_pil2CppMetadataRegistration->genericMethodTableCount; i++) {
         const Il2CppGenericMethodFunctionsDefinitions* genericMethodIndices = m_pil2CppMetadataRegistration->genericMethodTable + i;
@@ -330,10 +359,12 @@ std::string li2cpp::li2cppDumper::dumpGenericsMethod() {
  * 遍历程序集进行总 Dump (改为实时流式写入)
  */
 std::string li2cpp::li2cppDumper::dumpcs() {
+
+    /*il2cpp_domain_get il2cpp_domain_get_assemblies 这两个API可能会被加密*/
+
     auto domain = il2cpp_domain_get();
     size_t size;
     auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
-
     for (size_t i = 0; i < size; ++i) {
         auto image = il2cpp_assembly_get_image(assemblies[i]);
         auto classCount = il2cpp_image_get_class_count(image);
@@ -365,6 +396,8 @@ std::string li2cpp::li2cppDumper::get_method_space_name(const Il2CppMethodSpec* 
     if (!typeDef) return "";
 
     std::string className = GetStringFromIndex(typeDef->nameIndex);
+    LOG(LOG_LEVEL_INFO,"className : %s",className.c_str());
+
     size_t backtickPos = className.find_last_of('`');
     if (backtickPos != std::string::npos) className = className.substr(0, backtickPos);
 
@@ -470,10 +503,12 @@ std::string li2cpp::li2cppDumper::get_method_modifier(uint32_t flags) {
  * 遍历元数据中的 StringLiteral
  */
 std::string li2cpp::li2cppDumper::dumpStr() {
-    writeLog("Dumping String Literals...");
+
 
     for (size_t i = 0; i < m_pil2CppMetadataRegistration->metadataUsagesCount; i++) {
+
         uintptr_t* metadataPointer = reinterpret_cast<uintptr_t*>(m_pil2CppMetadataRegistration->metadataUsages[i]);
+
         if (metadataPointer) {
             // 调用你原有的运行时元数据解析逻辑
             dump_RuntimeMetadata(metadataPointer);
@@ -501,6 +536,7 @@ std::string li2cpp::li2cppDumper::dump_RuntimeMetadata(uintptr_t *metadataPointe
 
     // 仅处理字符串字面量
     if (usage == kIl2CppMetadataUsageStringLiteral) {
+        LOG(LOG_LEVEL_INFO,"--usage : %p",usage);
         // 使用 il2cpp 内部转换函数
         pstring = il2cpp_Il2CppString_toCString(GetStringLiteralFromIndex(decodedIndex));
 
@@ -527,6 +563,8 @@ bool li2cpp::li2cppDumper::writeLog(std::string str) {
     // 格式化输出，增加标识前缀
     std::string out = "[SFK] : " + str;
 
+
+    LOG(LOG_LEVEL_INFO,"%s",str.c_str());
     // 调用你文件类 cMyfile 的接口写入一行
     m_outlog->writeLine(out.c_str());
 
@@ -534,4 +572,10 @@ bool li2cpp::li2cppDumper::writeLog(std::string str) {
     m_outlog->flush();
 
     return true;
+}
+
+void li2cpp::li2cppDumper::initPackPath(std::string strPackName) {
+    m_pathlog = "/data/data/"+strPackName+"/files/log.cs";
+    m_pathDumpCs = "/data/data/"+strPackName+"/files/dumpcs.cs";
+    m_pathDumpstr = "/data/data/"+strPackName+"/files/dumpstr.cs";
 }

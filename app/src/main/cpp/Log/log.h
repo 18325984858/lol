@@ -28,7 +28,7 @@
                 if (level == LOG_LEVEL_INFO) priority = ANDROID_LOG_INFO; \
                 else if (level == LOG_LEVEL_WARN) priority = ANDROID_LOG_WARN; \
                 else if (level == LOG_LEVEL_ERROR) priority = ANDROID_LOG_ERROR; \
-                __android_log_print(priority, "SFK", "%s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__); \
+                __android_log_print(priority, "[SFK]", "%s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__); \
             } \
         } while (0)
 

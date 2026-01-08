@@ -26,6 +26,10 @@ li2cppApi::cUnityApi::cUnityApi(void*dqil2cppBase,
     if(m_li2cppso == nullptr){
         m_li2cppso = std::make_shared<Symbol::Symbol>("libil2cpp.so");
     }
+    if(m_lolgame == nullptr) {
+        m_lolgame = std::make_shared<lol::lol>(
+                (const Il2CppGlobalMetadataHeader *) pGlobalMetadataHeader);
+    }
 }
 
 uint64_t li2cppApi::cUnityApi::Getil2cppModuleBase() {
@@ -42,7 +46,7 @@ Il2CppClass *li2cppApi::cUnityApi::il2cpp_class_from_type(const Il2CppType *type
                 "il2cpp_class_from_type");
 
         if (m_ppil2cpp_class_from_type) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_from_type);
+
         }
     }
     return m_ppil2cpp_class_from_type(type);
@@ -58,7 +62,7 @@ const char *li2cppApi::cUnityApi::il2cpp_class_get_name(Il2CppClass *klass) {
                 "il2cpp_class_get_name");
 
         if (m_ppil2cpp_class_get_name) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_name);
+
         }
     }
     return m_ppil2cpp_class_get_name(klass);
@@ -74,7 +78,7 @@ const Il2CppAssembly **li2cppApi::cUnityApi::il2cpp_domain_get_assemblies(const 
                 "il2cpp_domain_get_assemblies");
 
         if (m_ppil2cpp_domain_get_assemblies) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_domain_get_assemblies);
+
         }
     }
     return m_ppil2cpp_domain_get_assemblies(domain,size);
@@ -89,7 +93,7 @@ Il2CppDomain *li2cppApi::cUnityApi::il2cpp_domain_get() {
         m_ppil2cpp_domain_get = (pil2cpp_domain_get) m_li2cppso->find(
                 "il2cpp_domain_get");
         if (m_ppil2cpp_domain_get) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_domain_get);
+
         }
     }
     return m_ppil2cpp_domain_get();
@@ -104,7 +108,7 @@ const Il2CppImage *li2cppApi::cUnityApi::il2cpp_assembly_get_image(const Il2CppA
         m_ppil2cpp_assembly_get_image = (pil2cpp_assembly_get_image) m_li2cppso->find(
                 "il2cpp_assembly_get_image");
         if (m_ppil2cpp_assembly_get_image) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_assembly_get_image);
+
         }
     }
     return m_ppil2cpp_assembly_get_image(assembly);
@@ -119,7 +123,7 @@ const char *li2cppApi::cUnityApi::il2cpp_image_get_name(const Il2CppImage *image
         m_ppil2cpp_image_get_name = (pil2cpp_image_get_name) m_li2cppso->find(
                 "il2cpp_image_get_name");
         if (m_ppil2cpp_image_get_name) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_image_get_name);
+
         }
     }
     return m_ppil2cpp_image_get_name(image);
@@ -134,7 +138,7 @@ const Il2CppClass *li2cppApi::cUnityApi::il2cpp_image_get_class(const Il2CppImag
         m_ppil2cpp_image_get_class = (pil2cpp_image_get_class) m_li2cppso->find(
                 "il2cpp_image_get_class");
         if (m_ppil2cpp_image_get_class) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_image_get_class);
+
         }
     }
     return m_ppil2cpp_image_get_class(image,index);
@@ -149,7 +153,7 @@ const Il2CppType *li2cppApi::cUnityApi::il2cpp_class_get_type(Il2CppClass *klass
         m_ppil2cpp_class_get_type = (pil2cpp_class_get_type) m_li2cppso->find(
                 "il2cpp_class_get_type");
         if (m_ppil2cpp_class_get_type) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_type);
+
         }
     }
     return m_ppil2cpp_class_get_type(klass);
@@ -164,7 +168,7 @@ Il2CppClass* li2cppApi::cUnityApi::il2cpp_type_get_class_or_element_class(const 
         m_ppil2cpp_type_get_class_or_element_class = (pil2cpp_type_get_class_or_element_class) m_li2cppso->find(
                 "il2cpp_type_get_class_or_element_class");
         if (m_ppil2cpp_type_get_class_or_element_class) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_type_get_class_or_element_class);
+
         }
     }
     return m_ppil2cpp_type_get_class_or_element_class(type);
@@ -179,7 +183,7 @@ size_t li2cppApi::cUnityApi::il2cpp_image_get_class_count(const Il2CppImage *ima
         m_ppil2cpp_image_get_class_count = (pil2cpp_image_get_class_count) m_li2cppso->find(
                 "il2cpp_image_get_class_count");
         if (m_ppil2cpp_image_get_class_count) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_image_get_class_count);
+
         }
     }
     return m_ppil2cpp_image_get_class_count(image);
@@ -194,7 +198,7 @@ bool li2cppApi::cUnityApi::il2cpp_class_is_inited(const Il2CppClass *klass) {
         m_ppil2cpp_class_is_inited = (pil2cpp_class_is_inited) m_li2cppso->find(
                 "il2cpp_class_is_inited");
         if (m_ppil2cpp_class_is_inited) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_is_inited);
+
         }
     }
     return m_ppil2cpp_class_is_inited(klass);
@@ -218,7 +222,7 @@ void *li2cppApi::cUnityApi::il2cpp_api_lookup_symbol(const char *name) {
         m_ppil2cpp_api_lookup_symbol = (pil2cpp_api_lookup_symbol) m_li2cppso->find(
                 "il2cpp_api_lookup_symbol");
         if (m_ppil2cpp_api_lookup_symbol) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_api_lookup_symbol);
+
         }
     }
     return m_ppil2cpp_api_lookup_symbol(name);
@@ -232,7 +236,7 @@ bool li2cppApi::cUnityApi::il2cpp_is_debugger_attached() {
         m_ppil2cpp_is_debugger_attached = (pil2cpp_is_debugger_attached) m_li2cppso->find(
                 "il2cpp_is_debugger_attached");
         if (m_ppil2cpp_is_debugger_attached) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_is_debugger_attached);
+
         }
     }
     return m_ppil2cpp_is_debugger_attached();
@@ -246,7 +250,7 @@ const char *li2cppApi::cUnityApi::il2cpp_class_get_namespace(Il2CppClass *klass)
         m_ppil2cpp_class_get_namespace = (pil2cpp_class_get_namespace)m_li2cppso->find(
                 "il2cpp_class_get_namespace");
         if (m_ppil2cpp_class_get_namespace) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_namespace);
+
         }
     }
     return m_ppil2cpp_class_get_namespace(klass);
@@ -260,7 +264,7 @@ Il2CppClass *li2cppApi::cUnityApi::il2cpp_class_get_parent(Il2CppClass *klass) {
         m_ppil2cpp_class_get_parent = (pil2cpp_class_get_parent)m_li2cppso->find(
                 "il2cpp_class_get_parent");
         if (m_ppil2cpp_class_get_parent) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_parent);
+
         }
     }
     return m_ppil2cpp_class_get_parent(klass);
@@ -274,7 +278,7 @@ Il2CppClass *li2cppApi::cUnityApi::il2cpp_class_get_declaring_type(Il2CppClass *
         m_ppil2cpp_class_get_declaring_type = (pil2cpp_class_get_declaring_type)m_li2cppso->find(
                 "il2cpp_class_get_declaring_type");
         if (m_ppil2cpp_class_get_declaring_type) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_declaring_type);
+
         }
     }
     return m_ppil2cpp_class_get_declaring_type(klass);
@@ -289,7 +293,7 @@ bool li2cppApi::cUnityApi::il2cpp_class_is_abstract(const Il2CppClass *klass) {
         m_ppil2cpp_class_is_abstract = (pil2cpp_class_is_abstract)m_li2cppso->find(
                 "il2cpp_class_is_abstract");
         if (m_ppil2cpp_class_is_abstract) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_is_abstract);
+
         }
     }
     return m_ppil2cpp_class_is_abstract(klass);
@@ -303,7 +307,7 @@ bool li2cppApi::cUnityApi::il2cpp_class_is_interface(const Il2CppClass *klass) {
         m_ppil2cpp_class_is_interface = (pil2cpp_class_is_interface)m_li2cppso->find(
                 "il2cpp_class_is_interface");
         if (m_ppil2cpp_class_is_interface) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_is_interface);
+
         }
     }
     return m_ppil2cpp_class_is_interface(klass);
@@ -317,7 +321,7 @@ bool li2cppApi::cUnityApi::il2cpp_class_is_enum(const Il2CppClass *klass) {
         m_ppil2cpp_class_is_enum = (pil2cpp_class_is_enum)m_li2cppso->find(
                 "il2cpp_class_is_enum");
         if (m_ppil2cpp_class_is_enum) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_is_enum);
+
         }
     }
     return m_ppil2cpp_class_is_enum(klass);
@@ -331,7 +335,7 @@ const char *li2cppApi::cUnityApi::il2cpp_field_get_name(FieldInfo *field) {
         m_ppil2cpp_field_get_name = (pil2cpp_field_get_name)m_li2cppso->find(
                 "il2cpp_field_get_name");
         if (m_ppil2cpp_field_get_name) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_field_get_name);
+
         }
     }
     return m_ppil2cpp_field_get_name(field);
@@ -345,7 +349,7 @@ int li2cppApi::cUnityApi::il2cpp_class_get_flags(const Il2CppClass *klass) {
         m_ppil2cpp_class_get_flags = (pil2cpp_class_get_flags)m_li2cppso->find(
                 "il2cpp_class_get_flags");
         if (m_ppil2cpp_class_get_flags) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_flags);
+
         }
     }
     return m_ppil2cpp_class_get_flags(klass);
@@ -359,7 +363,7 @@ bool li2cppApi::cUnityApi::il2cpp_class_is_valuetype(const Il2CppClass *klass) {
         m_ppil2cpp_class_is_valuetype = (pil2cpp_class_is_valuetype)m_li2cppso->find(
                 "il2cpp_class_is_valuetype");
         if (m_ppil2cpp_class_is_valuetype) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_is_valuetype);
+
         }
     }
     return m_ppil2cpp_class_is_valuetype(klass);
@@ -373,7 +377,7 @@ Il2CppClass *li2cppApi::cUnityApi::il2cpp_class_get_interfaces(Il2CppClass *klas
         m_ppil2cpp_class_get_interfaces = (pil2cpp_class_get_interfaces)m_li2cppso->find(
                 "il2cpp_class_get_interfaces");
         if (m_ppil2cpp_class_get_interfaces) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_interfaces);
+
         }
     }
     return m_ppil2cpp_class_get_interfaces(klass,iter);
@@ -387,7 +391,7 @@ FieldInfo *li2cppApi::cUnityApi::il2cpp_class_get_fields(Il2CppClass *klass, voi
         m_ppil2cpp_class_get_fields = (pil2cpp_class_get_fields)m_li2cppso->find(
                 "il2cpp_class_get_fields");
         if (m_ppil2cpp_class_get_fields) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_fields);
+
         }
     }
     return m_ppil2cpp_class_get_fields(klass,iter);
@@ -401,7 +405,7 @@ int li2cppApi::cUnityApi::il2cpp_field_get_flags(FieldInfo *field) {
         m_ppil2cpp_field_get_flags = (pil2cpp_field_get_flags)m_li2cppso->find(
                 "il2cpp_field_get_flags");
         if (m_ppil2cpp_field_get_flags) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_field_get_flags);
+
         }
     }
     return m_ppil2cpp_field_get_flags(field);
@@ -415,7 +419,7 @@ const Il2CppType *li2cppApi::cUnityApi::il2cpp_field_get_type(FieldInfo *field) 
         m_ppil2cpp_field_get_type = (pil2cpp_field_get_type)m_li2cppso->find(
                 "il2cpp_field_get_type");
         if (m_ppil2cpp_field_get_type) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_field_get_type);
+
         }
     }
     return m_ppil2cpp_field_get_type(field);
@@ -429,7 +433,6 @@ void li2cppApi::cUnityApi::il2cpp_field_static_get_value(FieldInfo *field, void 
         m_ppil2cpp_field_static_get_value = (pil2cpp_field_static_get_value)m_li2cppso->find(
                 "il2cpp_field_static_get_value");
         if (m_ppil2cpp_field_static_get_value) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_field_static_get_value);
         }
     }
     m_ppil2cpp_field_static_get_value(field,value);
@@ -443,7 +446,6 @@ size_t li2cppApi::cUnityApi::il2cpp_field_get_offset(FieldInfo *field) {
         m_ppil2cpp_field_get_offset = (pil2cpp_field_get_offset)m_li2cppso->find(
                 "il2cpp_field_get_offset");
         if (m_ppil2cpp_field_get_offset) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_field_get_offset);
         }
     }
     return m_ppil2cpp_field_get_offset(field);
@@ -458,7 +460,6 @@ li2cppApi::cUnityApi::il2cpp_class_get_properties(Il2CppClass *klass, void **ite
         m_ppil2cpp_class_get_properties = (pil2cpp_class_get_properties)m_li2cppso->find(
                 "il2cpp_class_get_properties");
         if (m_ppil2cpp_class_get_properties) {
-            LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__ ,m_ppil2cpp_class_get_properties);
         }
     }
     return m_ppil2cpp_class_get_properties(klass,iter);
@@ -481,7 +482,7 @@ const MethodInfo* li2cppApi::cUnityApi::il2cpp_property_get_get_method(PropertyI
                 "il2cpp_property_get_get_method");
 
         if (m_ppil2cpp_property_get_get_method) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_property_get_get_method);
+
         }
     }
 
@@ -508,8 +509,8 @@ const MethodInfo* li2cppApi::cUnityApi::il2cpp_property_get_set_method(PropertyI
                 "il2cpp_property_get_set_method");
 
         if (m_ppil2cpp_property_get_set_method) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_property_get_set_method);
-        }
+
+         }
     }
 
     // 4. 调用原始函数
@@ -536,7 +537,7 @@ const char* li2cppApi::cUnityApi::il2cpp_property_get_name(PropertyInfo *prop) {
                 "il2cpp_property_get_name");
 
         if (m_ppil2cpp_property_get_name) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_property_get_name);
+
         }
     }
 
@@ -564,7 +565,7 @@ uint32_t li2cppApi::cUnityApi::il2cpp_method_get_flags(const MethodInfo *method,
                 "il2cpp_method_get_flags");
 
         if (m_ppil2cpp_method_get_flags) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_get_flags);
+
         }
     }
 
@@ -591,8 +592,8 @@ const Il2CppType* li2cppApi::cUnityApi::il2cpp_method_get_return_type(const Meth
                 "il2cpp_method_get_return_type");
 
         if (m_ppil2cpp_method_get_return_type) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_get_return_type);
-        }
+
+         }
     }
 
     // 4. 调用原始函数
@@ -619,7 +620,7 @@ const Il2CppType* li2cppApi::cUnityApi::il2cpp_method_get_param(const MethodInfo
                 "il2cpp_method_get_param");
 
         if (m_ppil2cpp_method_get_param) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_get_param);
+
         }
     }
 
@@ -646,8 +647,8 @@ const MethodInfo* li2cppApi::cUnityApi::il2cpp_class_get_methods(Il2CppClass *kl
                 "il2cpp_class_get_methods");
 
         if (m_ppil2cpp_class_get_methods) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_class_get_methods);
-        }
+
+       }
     }
 
     // 4. 调用原始函数
@@ -673,7 +674,7 @@ uint32_t li2cppApi::cUnityApi::il2cpp_method_get_param_count(const MethodInfo *m
                 "il2cpp_method_get_param_count");
 
         if (m_ppil2cpp_method_get_param_count) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_get_param_count);
+
         }
     }
 
@@ -701,7 +702,7 @@ const char* li2cppApi::cUnityApi::il2cpp_method_get_name(const MethodInfo *metho
                 "il2cpp_method_get_name");
 
         if (m_ppil2cpp_method_get_name) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_get_name);
+
         }
     }
 
@@ -728,8 +729,8 @@ const char* li2cppApi::cUnityApi::il2cpp_method_get_param_name(const MethodInfo 
                 "il2cpp_method_get_param_name");
 
         if (m_ppil2cpp_method_get_param_name) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_get_param_name);
-        }
+
+       }
     }
 
     // 4. 调用原始函数
@@ -758,8 +759,8 @@ bool li2cppApi::cUnityApi::il2cpp_type_is_byref(const Il2CppType *type) {
                 "il2cpp_type_is_byref");
 
         if (m_ppil2cpp_type_is_byref) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_get_param_name);
-        }
+
+       }
     }
 
     // 4. 调用原始函数
@@ -778,7 +779,7 @@ bool li2cppApi::cUnityApi::il2cpp_method_is_generic(const MethodInfo *method) {
                 "il2cpp_method_is_generic");
 
         if (m_ppil2cpp_method_is_generic) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_is_generic);
+
         }
     }
     // 4. 调用原始函数
@@ -796,7 +797,7 @@ bool li2cppApi::cUnityApi::il2cpp_method_is_instance(const MethodInfo *method) {
                 "il2cpp_method_is_instance");
 
         if (m_ppil2cpp_method_is_instance) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_method_is_instance);
+
         }
     }
     // 4. 调用原始函数
@@ -823,9 +824,15 @@ uint32_t li2cppApi::cUnityApi::GetDecodedMethodIndex(EncodedMethodIndex index)
 Il2CppString *li2cppApi::cUnityApi::GetStringLiteralFromIndex(StringLiteralIndex index) {
     if (index == kStringLiteralIndexInvalid)
         return NULL;
-
+    LOG(LOG_LEVEL_INFO,"StringLiteralIndex : %d",index);
     const Il2CppStringLiteral* stringLiteral = (const Il2CppStringLiteral*)
                                                        ((const char*)m_pGlobalMetadata + m_pGlobalMetadataHeader->stringLiteralOffset) + index;
+
+    //解密
+    if(m_lolgame != nullptr) {
+        LOG(LOG_LEVEL_INFO,"m_lolgame in");
+        m_lolgame->decryPtthestring((char *) stringLiteral, index);
+    }
 
     Il2CppString* newString = il2cpp_string_new_len(
             (const char*)m_pGlobalMetadata + m_pGlobalMetadataHeader->stringLiteralDataOffset + stringLiteral->dataIndex
@@ -841,7 +848,7 @@ Il2CppString *li2cppApi::cUnityApi::il2cpp_string_new_len(const char *str, uint3
         m_ppil2cpp_string_new_len = (pil2cpp_string_new_len)m_li2cppso->find(
                 "il2cpp_string_new_len");
         if (m_ppil2cpp_string_new_len) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_string_new_len);
+
         }
     }
     // 4. 调用原始函数
@@ -858,7 +865,7 @@ Il2CppClass *li2cppApi::cUnityApi::il2cpp_class_get_nested_types(Il2CppClass *kl
         m_ppil2cpp_class_get_nested_types = (pil2cpp_class_get_nested_types)m_li2cppso->find(
                 "il2cpp_class_get_nested_types");
         if (m_ppil2cpp_class_get_nested_types) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_class_get_nested_types);
+
         }
     }
     // 4. 调用原始函数
@@ -876,7 +883,7 @@ const char *li2cppApi::cUnityApi::il2cpp_type_get_name(const Il2CppType *type) {
         m_ppil2cpp_type_get_name = (pil2cpp_type_get_name)m_li2cppso->find(
                 "il2cpp_type_get_name");
         if (m_ppil2cpp_type_get_name) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_type_get_name);
+
         }
     }
     // 4. 调用原始函数
@@ -894,7 +901,7 @@ int li2cppApi::cUnityApi::il2cpp_class_get_rank(const Il2CppClass *klass){
         m_ppil2cpp_class_get_rank = (pil2cpp_class_get_rank)m_li2cppso->find(
                 "il2cpp_class_get_rank");
         if (m_ppil2cpp_class_get_rank) {
-            // LOG(LOG_LEVEL_INFO, "%s = %p", __FUNCTION__, m_ppil2cpp_class_get_rank);
+
         }
     }
     // 4. 调用原始函数
@@ -1013,7 +1020,7 @@ li2cppApi::cUnityApi::GetGenericMethodFromIndex(GenericMethodIndex index) {
 }
 
 const MethodInfo* li2cppApi::cUnityApi::GetMethodInfoFromMethodDefinitionIndex(MethodIndex index){
-    IL2CPP_ASSERT(index >= 0 && static_cast<uint32_t>(index) <= m_pGlobalMetadataHeader->methodsSize / sizeof(Il2CppMethodDefinition));
+    IL2CPP_ASSERT(index >= 0 && static_cast<uint32_t>(index) <= m_pGlobalMetadataHeader->methodsCount / sizeof(Il2CppMethodDefinition));
     const Il2CppMethodDefinition* methodDefinition = GetMethodDefinitionFromIndex(index);
     //GetStringFromIndex(methodDefinition->nameIndex);
 
@@ -1031,17 +1038,33 @@ T li2cppApi::cUnityApi::MetadataOffset(const void* metadata, size_t sectionOffse
 
 
 const Il2CppMethodDefinition* li2cppApi::cUnityApi::GetMethodDefinitionFromIndex(MethodIndex index){
+#ifdef UNITY_2018_4_16F1
+    IL2CPP_ASSERT(index >= 0 && static_cast<uint32_t>(index) <= m_pGlobalMetadataHeader->methodsCount / sizeof(Il2CppMethodDefinition));
+#else
     IL2CPP_ASSERT(index >= 0 && static_cast<uint32_t>(index) <= m_pGlobalMetadataHeader->methodsSize / sizeof(Il2CppMethodDefinition));
+#endif
     return MetadataOffset<const Il2CppMethodDefinition*>(m_pGlobalMetadata, m_pGlobalMetadataHeader->methodsOffset, index);
 }
 
 const char *li2cppApi::cUnityApi::GetStringFromIndex(StringIndex index) {
+#ifdef UNITY_2018_4_16F1
+    IL2CPP_ASSERT(index <= m_pGlobalMetadataHeader->stringCount);
+    char* pstr= (char*)(m_pGlobalMetadata, m_pGlobalMetadataHeader->stringOffset, index);
+    m_lolgame->decryPtthestring(pstr,index);
+    return (const char *)pstr;
+#else
     IL2CPP_ASSERT(index <= m_pGlobalMetadataHeader->stringSize);
     return MetadataOffset<const char*>(m_pGlobalMetadata, m_pGlobalMetadataHeader->stringOffset, index);
+#endif
 }
 const char* li2cppApi::cUnityApi::GetWindowsRuntimeStringFromIndex(StringIndex index){
+#ifdef UNITY_2018_4_16F1
+    IL2CPP_ASSERT(index <= m_pGlobalMetadataHeader->windowsRuntimeTypeNamesSize);
+    return MetadataOffset<const char*>(m_pGlobalMetadata, m_pGlobalMetadataHeader->windowsRuntimeTypeNamesOffset, index);
+#else
     IL2CPP_ASSERT(index <= m_pGlobalMetadataHeader->windowsRuntimeStringsSize);
-    return MetadataOffset<const char*>(m_pGlobalMetadata, m_pGlobalMetadataHeader->windowsRuntimeStringsOffset, index);
+     return MetadataOffset<const char*>(m_pGlobalMetadata, m_pGlobalMetadataHeader->windowsRuntimeStringsOffset, index);
+#endif
 }
 
 const Il2CppGenericClass *

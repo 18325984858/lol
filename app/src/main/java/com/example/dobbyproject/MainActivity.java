@@ -40,7 +40,7 @@ public class MainActivity extends AppCompatActivity {
         System.loadLibrary("dobbyproject");
     }
 
-    String g_packFileName = "com.DefaultCompany.Demo1";
+    String g_packFileName = "com.tencent.lolm";
 
     String g_nativeLibPath = "";
 
@@ -69,6 +69,8 @@ public class MainActivity extends AppCompatActivity {
         String dstDir = "/data/data/" + g_packFileName + "/files";
         String dstFile = dstDir + "/libdobbyproject.so";
 
+        LogUtil.i(srcFile.toString());
+
         LogUtil.i("KSU 尝试全局拷贝 -> " + dstFile);
 
         try {
@@ -82,6 +84,8 @@ public class MainActivity extends AppCompatActivity {
                     "chmod 777 " + dstFile + "\n" +
                     "sync\n" +
                     "exit\n";
+
+            LogUtil.i(cmd.toString());
 
             os.writeBytes(cmd);
             os.flush();
@@ -104,5 +108,4 @@ public class MainActivity extends AppCompatActivity {
             LogUtil.e("KSU 异常: " + e.getMessage(), e);
         }
     }
-
 }

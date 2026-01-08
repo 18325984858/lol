@@ -10,7 +10,7 @@
 Symbol::Symbol::Symbol(const std::string & sopath):m_sopath(sopath),m_Mmodule(nullptr) {
     m_addressMap = std::make_shared<std::map<std::string,void*>>();
     if(m_addressMap){
-        LOG(LOG_LEVEL_INFO,"m_addressMap Init Success!");
+        //LOG(LOG_LEVEL_INFO,"m_addressMap Init Success!");
     }
 }
 
@@ -31,7 +31,7 @@ void* Symbol::Symbol::find(const std::string& symbolName) {
         p = DobbySymbolResolver(m_sopath.c_str(),symbolName.c_str());
         if(p != nullptr){
             m_addressMap.get()->insert(std::make_pair(symbolName,p));
-            LOG(LOG_LEVEL_INFO,"DobbySymbolResolver FindFunction:%s Address:%p Success!",symbolName.c_str(),p);
+            //LOG(LOG_LEVEL_INFO,"DobbySymbolResolver FindFunction:%s Address:%p Success!",symbolName.c_str(),p);
         }
     }while(0);
     return p;

@@ -94,6 +94,7 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         "File/file.cpp"
         "UnityApi/unityapi.cpp"
         "li2cpp Dumper/li2cppDumper.cpp"
+        "lol/lolm.cpp"
 )
 
 # Specifies libraries CMake should link to your target library. You
