@@ -10,7 +10,6 @@
 #include <unordered_map>
 #include <android/log.h>
 
-
 li2cpp::li2cppDumper::li2cppDumper(void* dqil2cppBase,
                                    void *pCodeRegistration,
                                    void *pMetadataRegistration,
@@ -105,9 +104,7 @@ bool li2cpp::li2cppDumper::initInfo() {
 std::string li2cpp::li2cppDumper::get_type_name(const Il2CppType* type) {
     if (!type) return "void";
     std::string suffix = il2cpp_type_is_byref(type) ? "&" : "";
-
-     Il2CppClass* klass = il2cpp_class_from_type(type);
-
+    Il2CppClass* klass = il2cpp_class_from_type(type);
 
     // 处理数组 (SZARRAY 一维, ARRAY 多维)
     if (type->type == IL2CPP_TYPE_SZARRAY) {
@@ -306,7 +303,7 @@ std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
         }
         outPut << ") { }\n";
 
-        LOG(LOG_LEVEL_INFO,"method->methodPointer ： %p",method->methodPointer);
+
         // 处理泛型方法定义与其对应的具体实例 (RVA)
         if (method->methodPointer == nullptr) {
             // 使用优化后的哈希表查询该 Token 关联的所有泛型实例
@@ -403,6 +400,7 @@ std::string li2cpp::li2cppDumper::get_method_space_name(const Il2CppMethodSpec* 
 
     std::string classGenerics = get_method_generic_name(spec->classIndexIndex);
     std::string methodGenerics = get_method_generic_name(spec->methodIndexIndex);
+    LOG(LOG_LEVEL_INFO,"classGenerics : %s methodGenerics : %s",classGenerics.c_str(),methodGenerics.c_str());
 
     return className + classGenerics + "." + GetStringFromIndex(methodDef->nameIndex) + methodGenerics;
 }
@@ -413,14 +411,23 @@ std::string li2cpp::li2cppDumper::get_method_space_name(const Il2CppMethodSpec* 
 std::string li2cpp::li2cppDumper::get_method_generic_name(GenericInstIndex index) {
     if (index == kTypeIndexInvalid || index >= (GenericInstIndex)m_pil2CppMetadataRegistration->genericInstsCount) return "";
     const Il2CppGenericInst* inst = m_pil2CppMetadataRegistration->genericInsts[index];
-    if (!inst || inst->type_argc == 0) return "";
+    if (!inst || inst->type_argc == 0 || !inst->type_argv) return "";
 
     std::string ret = "<";
     for (uint32_t i = 0; i < inst->type_argc; ++i) {
+        if (!inst->type_argv[i]) {
+            LOG(LOG_LEVEL_ERROR, "Generic arg %d is null, index: %d", i, index);
+            continue; // 跳过空参数，而非崩溃
+        }
+
         if (i > 0) ret += ", ";
+        LOG(LOG_LEVEL_INFO,"inst->type_argv[i] : %p",inst->type_argv[i]);
         ret += get_type_name(inst->type_argv[i]);
     }
     ret += ">";
+
+    LOG(LOG_LEVEL_INFO,"type_argc : %d",inst->type_argc);
+
     return ret;
 }
 

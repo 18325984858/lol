@@ -7,7 +7,7 @@
 #include "../Log/log.h"
 std::string lol::lol::decryPtthestring(char*Srcstr, uint32_t nameIndex) {
 
-    LOG(LOG_LEVEL_INFO,"start nameIndex : %d Srcstr : %p",nameIndex,Srcstr);
+    LOG(LOG_LEVEL_INFO,"start nameIndex : %d Srcstr : %p Srcstrvalue : %s",nameIndex,Srcstr,Srcstr);
 
     auto pNode = this->m_pMapStringIndex->find(nameIndex);
     if (pNode != this->m_pMapStringIndex->end()) {
@@ -16,8 +16,7 @@ std::string lol::lol::decryPtthestring(char*Srcstr, uint32_t nameIndex) {
 
 
     bool ret =IsEncryptionOrIsDecryption(nameIndex);
-    LOG(LOG_LEVEL_INFO,"ret : %d",ret);
-
+    LOG(LOG_LEVEL_INFO,"Ret = %d",ret);
     //判断是否加密了字符串
     if(ret){
         uint32_t newNameIndex = (int) nameIndex >= 0 ? nameIndex : nameIndex + 15;
@@ -53,7 +52,7 @@ std::string lol::lol::decryPtthestring(char*Srcstr, uint32_t nameIndex) {
         pnewNode->srcStr = Srcstr;
         this->m_pMapStringIndex->insert({nameIndex, pnewNode});
     }
-    LOG(LOG_LEVEL_INFO,"start nameIndex : %d Srcstr : %p",nameIndex,Srcstr);
+    LOG(LOG_LEVEL_INFO,"end nameIndex : %d Srcstr : %p Srcstrvalue : %s",nameIndex,Srcstr,Srcstr);
     return Srcstr;
 }
 

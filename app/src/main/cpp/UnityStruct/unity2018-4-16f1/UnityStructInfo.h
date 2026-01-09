@@ -759,12 +759,14 @@ typedef struct Il2CppGenericInst
 } Il2CppGenericInst;
 typedef struct Il2CppGenericContext
 {
+    /* The instantiation corresponding to the class generic parameters */
     const Il2CppGenericInst *class_inst;
+    /* The instantiation corresponding to the method generic parameters */
     const Il2CppGenericInst *method_inst;
 } Il2CppGenericContext;
 typedef struct Il2CppGenericParameter
 {
-    GenericContainerIndex ownerIndex;
+    GenericContainerIndex ownerIndex;  /* Type or method this parameter was defined in. */
     StringIndex nameIndex;
     GenericParameterConstraintIndex constraintsStart;
     int16_t constraintsCount;
@@ -778,6 +780,7 @@ typedef struct Il2CppGenericContainer
     int32_t is_method;
     GenericParameterIndex genericParameterStart;
 } Il2CppGenericContainer;
+
 typedef struct Il2CppGenericClass
 {
     TypeDefinitionIndex typeDefinitionIndex;
@@ -1409,7 +1412,7 @@ typedef struct Il2CppMetadataRegistration
     Il2CppGenericClass* const * genericClasses;
 
     int32_t typeDefinitionsSizesCount;
-    const Il2CppGenericInst* const * genericInsts;
+    const Il2CppTypeDefinitionSizes** typeDefinitionsSizes;
 
     int32_t fieldOffsetsCount;
     const int32_t** fieldOffsets;
@@ -1424,7 +1427,7 @@ typedef struct Il2CppMetadataRegistration
     const Il2CppGenericMethodFunctionsDefinitions* genericMethodTable;
 
     int32_t genericInstsCount;
-    const Il2CppTypeDefinitionSizes** typeDefinitionsSizes;
+    const Il2CppGenericInst* const * genericInsts;
 
     int32_t genericClassesCount;
     void** const* metadataUsages;

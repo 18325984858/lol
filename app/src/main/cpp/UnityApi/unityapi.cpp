@@ -1049,8 +1049,10 @@ const Il2CppMethodDefinition* li2cppApi::cUnityApi::GetMethodDefinitionFromIndex
 const char *li2cppApi::cUnityApi::GetStringFromIndex(StringIndex index) {
 #ifdef UNITY_2018_4_16F1
     IL2CPP_ASSERT(index <= m_pGlobalMetadataHeader->stringCount);
-    char* pstr= (char*)(m_pGlobalMetadata, m_pGlobalMetadataHeader->stringOffset, index);
-    m_lolgame->decryPtthestring(pstr,index);
+    char* pstr= (char*)((uint64_t)m_pGlobalMetadata + m_pGlobalMetadataHeader->stringOffset+ index);
+    //LOG(LOG_LEVEL_INFO,"m_pGlobalMetadata : %p stringOffset : %d index ：%d",
+    //    m_pGlobalMetadata,m_pGlobalMetadataHeader->stringOffset,index);
+    //m_lolgame->decryPtthestring(pstr,index);
     return (const char *)pstr;
 #else
     IL2CPP_ASSERT(index <= m_pGlobalMetadataHeader->stringSize);
