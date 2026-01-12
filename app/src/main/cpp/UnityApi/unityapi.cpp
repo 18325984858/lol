@@ -831,7 +831,7 @@ Il2CppString *li2cppApi::cUnityApi::GetStringLiteralFromIndex(StringLiteralIndex
     //解密
     if(m_lolgame != nullptr) {
         LOG(LOG_LEVEL_INFO,"m_lolgame in");
-        m_lolgame->decryPtthestring((char *) stringLiteral, index);
+        //m_lolgame->decryPtthestring((char *) stringLiteral, index);
     }
 
     Il2CppString* newString = il2cpp_string_new_len(
