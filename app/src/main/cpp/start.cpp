@@ -6,6 +6,8 @@
 #include "./li2cpp Dumper/li2cppdumper.h"
 #include "./File/file.h"
 #include "./Log/log.h"
+#include "./interface/interface.h"
+
 #define _SOURCE_SO_PATH_ "libdobbyproject.so"
 #define _Det_PACK_PATH_ "com.DefaultCompany.Demo1"
 
@@ -16,6 +18,22 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
         if(pli2cppModeBase == nullptr){
             return false;
         }
+
+        fun::function functionInfo(pli2cppModeBase,
+                                   pCodeRegistration,
+                                   pMetadataRegistration,
+                                   pGlobalMetadataHeader);
+
+        functionInfo.fillingClassInfo();
+
+
+        int* curRegisterID = (int*)functionInfo.GetStaticMember("ilbil2cpp.so",
+                                     "Assembly-CSharp.dll",
+                                     "<>c__DisplayClass6_0",
+                                     "JoystickSkillHandler.<>c__DisplayClass6_0",
+                                     "curRegisterID");
+        LOG(LOG_LEVEL_INFO,"curRegisterID : %d", curRegisterID);
+
 
         //li2cpp::li2cppDumper li2CppDumperInfo(0,0,0,0,0);
         // 1. 创建对象并初始化

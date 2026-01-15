@@ -59,7 +59,7 @@ namespace lol {
         std::string srcStr;
     }LolStrStruct,*PLolStrStruct;
 
-    class lol{
+    class lol {
     public:
         lol(const Il2CppGlobalMetadataHeader* pGlobalMetadataHeader = nullptr);
         ~lol();

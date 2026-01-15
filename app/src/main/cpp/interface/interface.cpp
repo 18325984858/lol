@@ -33,6 +33,10 @@ fun::function::function(void* dqil2cppBase,
     if(m_pClassInfo){
         m_pClassInfo = std::make_shared<std::list<std::shared_ptr<CClassInfo>>>();
     }
+
+
+
+
 }
 
 
@@ -46,12 +50,12 @@ bool fun::function::writeLog(std::string str) {
     }
 
     // 格式化输出，增加标识前缀
-    std::string out = "[SFK] : " + str;
+    //std::string out = "[SFK] : " + str;
 
 
-    LOG(LOG_LEVEL_INFO,"%s",str.c_str());
+    //LOG(LOG_LEVEL_INFO,"%s",str.c_str());
     // 调用你文件类 cMyfile 的接口写入一行
-    m_outlog->writeLine(out.c_str());
+    m_outlog->writeLine(str.c_str());
 
     // 实时冲刷缓冲区，防止日志丢失
     m_outlog->flush();
@@ -66,6 +70,7 @@ void fun::function::initPackPath(std::string strPackName) {
 void*fun::function::GetStaticMember(std::string pMainModuleName, std::string pModuleName,
                                     std::string pClassName, std::string ptemplateName,
                                     std::string pStaticName) {
+
     if(m_pClassInfo && !m_pClassInfo->empty()){
         for(auto&ite:*m_pClassInfo){
             //判断模块名是否一致，如果一致说明在此链表中
@@ -77,9 +82,14 @@ void*fun::function::GetStaticMember(std::string pMainModuleName, std::string pMo
                        (ptemplateName.empty() ? 1 : *pClassStruct.m_pClassData->m_pGenericsName == ptemplateName)){
                         //如果找到类就遍历类下面的静态成员名，
                         for(auto&pStaticStruct:*pClassStruct.m_pVectorStaticData){
-                            if(*pStaticStruct->m_pName == pStaticName){
+                            if(*pStaticStruct->m_Data.m_pName == pStaticName){
                                 //如果都相等返回当前找到的指针
-                                return pStaticStruct.get();
+                                FieldInfo *fieldInfo = (FieldInfo*)pStaticStruct->fieldInfo;
+                                uint64_t Value = 0;
+                                if(fieldInfo != nullptr) {
+                                    il2cpp_field_static_get_value(fieldInfo, &Value);
+                                }
+                                return (void*)Value;
                             }
                         }
                     }
@@ -128,17 +138,18 @@ fun::function::AddClassStructInfo(std::shared_ptr<fun::CClassData> pData,std::st
     return pData;
 }
 
-std::shared_ptr<std::vector<std::shared_ptr<fun::CData>>>
-fun::function::AddVectorStaticData(std::shared_ptr<std::vector<std::shared_ptr<fun::CData>>> pData,
-                                   std::string pStaticName,uint64_t offset) {
+std::shared_ptr<std::vector<std::shared_ptr<fun::CFieldData>>>
+fun::function::AddVectorStaticData(std::shared_ptr<std::vector<std::shared_ptr<fun::CFieldData>>> pData,
+                                   std::string pStaticName,FieldInfo *fieldInfo, uint64_t offset) {
     if (pData == nullptr && pStaticName.empty()) {
         return nullptr;
     }
 
-    auto p = std::make_shared<fun::CData>();
+    auto p = std::make_shared<fun::CFieldData>();
     if (p) {
-        p->m_pName = std::make_shared<std::string>(pStaticName);
-        p->m_offset = offset;
+        p->m_Data.m_pName = std::make_shared<std::string>(pStaticName);
+        p->m_Data.m_offset = offset;
+        p->fieldInfo = fieldInfo;
         pData->push_back(p);
     }
     return pData;
@@ -237,6 +248,8 @@ void fun::function::fillingClassInfo() {
     if (m_pClassInfo == nullptr) {
         m_pClassInfo = std::make_shared<std::list<std::shared_ptr<CClassInfo>>>();
     }
+
+    char szBuf[0x1000] = {0};
     std::string Buf = "";
     auto domain = il2cpp_domain_get();
     size_t size;
@@ -266,7 +279,7 @@ void fun::function::fillingClassInfo() {
 
             // 2. 准备类的数据结构
             auto pClassDataObj = std::make_shared<CClassData>();
-            pClassDataObj->m_pVectorStaticData = std::make_shared<std::vector<std::shared_ptr<CData>>>();
+            pClassDataObj->m_pVectorStaticData = std::make_shared<std::vector<std::shared_ptr<CFieldData>>>();
             pClassDataObj->m_pVectorFunctionData = std::make_shared<std::vector<std::shared_ptr<CTemplateData>>>();
 
             // 3. 获取类名
@@ -304,7 +317,7 @@ void fun::function::fillingClassInfo() {
                 Buf = "[Field] Name:";
                 Buf.append(fieldName);
                 writeLog(Buf);
-                AddVectorStaticData(pClassDataObj->m_pVectorStaticData, fieldName, (uint64_t)offset);
+                AddVectorStaticData(pClassDataObj->m_pVectorStaticData, fieldName,field, (uint64_t)offset);
             }
 
             // 6. 遍历方法 (Methods)
@@ -312,12 +325,12 @@ void fun::function::fillingClassInfo() {
             while (auto method = il2cpp_class_get_methods(const_cast<Il2CppClass *>(klass), &iter_method)) {
                 const char* methodName = il2cpp_method_get_name(method);
                 // 获取方法的虚地址（在内存中的地址）
-                uint64_t methodAddr = (uint64_t)method;
-
+                uint64_t methodAddr = (uint64_t)method->methodPointer;
+                sprintf(szBuf,"%p",methodAddr);
                 //LOG(LOG_LEVEL_INFO, "    [Method] Name: %s, Addr: 0x%llX", methodName, methodAddr);
-                Buf = "[Method] Name:";
+                Buf = "[Method] Name: ";
                 Buf.append(methodName);
-                writeLog(Buf);
+                writeLog(Buf+" "+szBuf);
                 AddVectorFunctionData(pClassDataObj->m_pVectorFunctionData, methodName, "", methodAddr);
             }
 

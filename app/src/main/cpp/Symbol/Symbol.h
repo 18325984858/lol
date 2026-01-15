@@ -5,7 +5,7 @@
 #ifndef DOBBY_PROJECT_SYMBOL_H
 #define DOBBY_PROJECT_SYMBOL_H
 
-#endif //DOBBY_PROJECT_SYMBOL_H
+
 
 #include <map>
 #include <string>
@@ -25,3 +25,5 @@ namespace Symbol{
         std::string m_sopath = nullptr;
     };
 };
+
+#endif //DOBBY_PROJECT_SYMBOL_H

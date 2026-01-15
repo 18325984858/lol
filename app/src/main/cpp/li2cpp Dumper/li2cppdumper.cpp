@@ -45,17 +45,31 @@ li2cpp::li2cppDumper::li2cppDumper(void* dqil2cppBase,
 }
 
 li2cpp::li2cppDumper::~li2cppDumper() {
+
+
+
+
     // 析构时统一冲刷缓冲区并关闭文件
-    if (m_outDumpCs) { m_outDumpCs->flush(); m_outDumpCs->closeFile(); }
-    if (m_outDumpstr) { m_outDumpstr->flush(); m_outDumpstr->closeFile(); }
-    if (m_outlog) { m_outlog->flush(); m_outlog->closeFile(); }
+    if (m_outDumpCs) {
+        writeLog("析构 m_outDumpCs ");
+        m_outDumpCs->flush();
+        m_outDumpCs->closeFile();
+    }
+
+    if (m_outDumpstr) {
+        writeLog("析构 m_outDumpstr ");
+        m_outDumpstr->flush();
+        m_outDumpstr->closeFile();
+    }
+
+    if (m_outlog) {
+        writeLog("析构 m_outlog ");
+        m_outlog->flush();
+        m_outlog->closeFile();
+    }
 
     if(m_kIl2CppMetadataUsageStringLiteral){
-
-        for (auto& it : *this->m_kIl2CppMetadataUsageStringLiteral) {
-            it.second = nullptr;
-        }
-
+        writeLog("析构 m_kIl2CppMetadataUsageStringLiteral ");
         m_kIl2CppMetadataUsageStringLiteral->clear();
         m_kIl2CppMetadataUsageStringLiteral = nullptr;
     }
@@ -64,19 +78,24 @@ li2cpp::li2cppDumper::~li2cppDumper() {
         for (auto& it : *this->m_methodMap) {
             it.second = nullptr;
         }
+        writeLog("析构 m_methodMap ");
         m_methodMap->clear();
         m_methodMap = nullptr;
     }
 
     if(m_methodList){
+        writeLog("析构 m_methodList ");
         m_methodList->clear();
         m_methodList = nullptr;
     }
 
     if(m_outPuts){
+        writeLog("析构 m_outPuts ");
         m_outPuts->clear();
         m_outPuts = nullptr;
     }
+
+
 }
 
 bool li2cpp::li2cppDumper::initInfo() {
@@ -93,7 +112,7 @@ bool li2cpp::li2cppDumper::initInfo() {
     dumpcs();
 
     // 3. 导出字符串
-    //dumpStr();
+    dumpStr();
 
     return true;
 }
@@ -277,8 +296,9 @@ std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
 
 
         if (method->methodPointer) {
-            outPut << "\t// RVA: 0x" << std::hex << (uint64_t)method->methodPointer - Getil2cppModuleBase()
-                   << " VA: 0x" << (uint64_t)method->methodPointer << "\n";
+            outPut << "\t// RVA: 0x" << std::hex
+                   << (uint64_t) method->methodPointer - Getil2cppModuleBase()
+                   << " VA: 0x" << (uint64_t) method->methodPointer << "\n";
         } else {
             outPut << "\t// RVA: -1\n";
         }
@@ -288,7 +308,8 @@ std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
         outPut << get_method_modifier(il2cpp_method_get_flags(method, &iflags));
 
         auto return_type = il2cpp_method_get_return_type(method);
-        outPut << (return_type->byref ? "ref " : "") << get_type_name(return_type) << " " << il2cpp_method_get_name(method) << "(";
+        outPut << (return_type->byref ? "ref " : "") << get_type_name(return_type) << " "
+               << il2cpp_method_get_name(method) << "(";
 
         auto param_count = il2cpp_method_get_param_count(method);
         for (int i = 0; i < param_count; ++i) {
@@ -305,15 +326,36 @@ std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
 
 
         // 处理泛型方法定义与其对应的具体实例 (RVA)
-        if (method->methodPointer == nullptr) {
-            // 使用优化后的哈希表查询该 Token 关联的所有泛型实例
+        //if (method->methodPointer) {
+        // 使用优化后的哈希表查询该 Token 关联的所有泛型实例
+        //auto range = m_methodMap->equal_range(method->token);
+        //for (auto it = range.first; it != range.second; ++it) {
+        //   auto elem = it->second;
+        //    std::string specName = get_method_space_name(elem->Spec);
+        //    outPut << "\t// [GenericInstance] RVA: 0x" << std::hex << elem->offset << " Spec: " << specName << "\n";
+        // }
+        //}
+
+        // 处理泛型方法定义与其对应的具体实例 (RVA)
+        //if (method->methodPointer == nullptr) {
             auto range = m_methodMap->equal_range(method->token);
-            for (auto it = range.first; it != range.second; ++it) {
-                auto elem = it->second;
-                std::string specName = get_method_space_name(elem->Spec);
-                outPut << "\t// [GenericInstance] RVA: 0x" << std::hex << elem->offset << " Spec: " << specName << "\n";
+
+            if (range.first != range.second) {
+                outPut << "\t// --- Generic Instances Found ---\n"; // 添加一个分割线
+                for (auto it = range.first; it != range.second; ++it) {
+                    auto elem = it->second;
+                    std::string specName = get_method_space_name(elem->Spec);
+
+                    // 优化布局：使用 └─ 符号，并统一十六进制宽度为 8 位（补零）
+                    char buffer[128];
+                    snprintf(buffer, sizeof(buffer),
+                             "\t//   └─ [Generic] RVA: 0x%08llX | Spec: %s\n",
+                             (unsigned long long) elem->offset, specName.c_str());
+
+                    outPut << buffer;
+                }
             }
-        }
+        //}
     }
     return outPut.str();
 }
@@ -470,48 +512,114 @@ std::string li2cpp::li2cppDumper::dump_property(Il2CppClass *klass) {
 }
 
 /**
- * 方法修饰符解析
- * 将 Il2Cpp 的 MethodAttributes 转换为 C# 关键字
+ * 方法修饰符解析 (优化版)
+ * 修正了抽象/虚函数/重写的逻辑冲突，并添加了 sealed 支持
  */
 std::string li2cpp::li2cppDumper::get_method_modifier(uint32_t flags) {
     std::stringstream outPut;
 
-    // 1. 访问权限
+    // 1. 访问权限 (Access Flags)
     auto access = flags & METHOD_ATTRIBUTE_MEMBER_ACCESS_MASK;
     switch (access) {
-        case METHOD_ATTRIBUTE_PRIVATE: outPut << "private "; break;
-        case METHOD_ATTRIBUTE_PUBLIC:  outPut << "public "; break;
-        case METHOD_ATTRIBUTE_FAMILY:  outPut << "protected "; break;
-        case METHOD_ATTRIBUTE_FAM_AND_ASSEM: outPut << "private protected "; break;
-        case METHOD_ATTRIBUTE_FAM_OR_ASSEM:  outPut << "protected internal "; break;
-        default:                       outPut << "internal "; break;
+        case METHOD_ATTRIBUTE_PRIVATE:        outPut << "private "; break;
+        case METHOD_ATTRIBUTE_PUBLIC:         outPut << "public "; break;
+        case METHOD_ATTRIBUTE_FAMILY:         outPut << "protected "; break;
+        case METHOD_ATTRIBUTE_ASSEM:          outPut << "internal "; break;
+        case METHOD_ATTRIBUTE_FAM_AND_ASSEM:  outPut << "private protected "; break;
+        case METHOD_ATTRIBUTE_FAM_OR_ASSEM:   outPut << "protected internal "; break;
+        case METHOD_ATTRIBUTE_COMPILER_CONTROLLED: outPut << "[compiler_controlled] "; break;
+        default: break;
     }
 
     // 2. 静态修饰符
-    if (flags & METHOD_ATTRIBUTE_STATIC) outPut << "static ";
+    if (flags & METHOD_ATTRIBUTE_STATIC) {
+        outPut << "static ";
+    }
 
-    // 3. 虚函数/抽象/重写逻辑
-    if (flags & METHOD_ATTRIBUTE_ABSTRACT) {
-        outPut << "abstract ";
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_REUSE_SLOT) outPut << "override ";
-    } else if (flags & METHOD_ATTRIBUTE_VIRTUAL) {
-        if ((flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_NEW_SLOT) outPut << "virtual ";
-        else outPut << "override ";
+    // 3. 虚函数逻辑处理 (Virtual, Abstract, Override, Sealed)
+    // 注意：在 IL2CPP 中，Abstract 必然也是 Virtual 的
+    if (flags & METHOD_ATTRIBUTE_VIRTUAL) {
+        bool isNewSlot = (flags & METHOD_ATTRIBUTE_VTABLE_LAYOUT_MASK) == METHOD_ATTRIBUTE_NEW_SLOT;
+        bool isFinal = (flags & METHOD_ATTRIBUTE_FINAL);
+        bool isAbstract = (flags & METHOD_ATTRIBUTE_ABSTRACT);
+
+        if (isAbstract) {
+            outPut << "abstract ";
+            // 如果不是 NewSlot 且是 Abstract，通常是接口实现或重写了父类的抽象方法
+            if (!isNewSlot) outPut << "override ";
+        }
+        else if (isFinal) {
+            // 如果设置了 Final 但又是 Virtual，且不是 NewSlot，说明是 sealed override
+            if (!isNewSlot) outPut << "sealed override ";
+            // 如果是 NewSlot + Final，那其实就是一个普通方法，不输出 virtual
+        }
+        else if (isNewSlot) {
+            outPut << "virtual ";
+        }
+        else {
+            outPut << "override ";
+        }
     }
 
     // 4. 外部调用
-    if (flags & METHOD_ATTRIBUTE_PINVOKE_IMPL) outPut << "extern ";
+    if (flags & METHOD_ATTRIBUTE_PINVOKE_IMPL) {
+        outPut << "extern ";
+    }
 
     return outPut.str();
 }
-
 /**
  * 字符串常量 Dump
  * 遍历元数据中的 StringLiteral
  */
 std::string li2cpp::li2cppDumper::dumpStr() {
 
+    LOG(LOG_LEVEL_INFO,"metadataUsagePairsCount : %d",m_pGlobalMetadataHeader->metadataUsagePairsCount);
+    LOG(LOG_LEVEL_INFO,"metadataUsagesCount : %zu",m_pil2CppMetadataRegistration->metadataUsagesCount);
 
+#ifdef UNITY_2018_4_16F1
+    int allCount = m_pGlobalMetadataHeader->metadataUsageListsCount/ sizeof(Il2CppMetadataUsageList);
+    for (int i = 0; i < allCount; ++i) {
+        Il2CppMetadataUsageList *metadataUsageLists = (Il2CppMetadataUsageList *) (
+                (uint64_t) m_pGlobalMetadata
+                + m_pGlobalMetadataHeader->metadataUsageListsOffset
+                + 8LL * i);
+
+        if(metadataUsageLists== nullptr || metadataUsageLists->start == 0){
+            continue;
+        }
+
+        //int32_t dwCount = m_pGlobalMetadataHeader->metadataUsagePairsCount / sizeof(Il2CppMetadataUsagePair);
+        for (int j = 0; j < metadataUsageLists->count; ++j) {
+            const Il2CppMetadataUsagePair *metadataUsagePairs = (Il2CppMetadataUsagePair *) (
+                    (uint64_t) m_pGlobalMetadata
+                    + m_pGlobalMetadataHeader->metadataUsagePairsOffset
+                    + 8LL * (unsigned int) (j + metadataUsageLists->start));
+
+            if(!metadataUsagePairs){
+                continue;
+            }
+            uint32_t destinationIndex = metadataUsagePairs->destinationIndex;
+            uint32_t encodedSourceIndex = metadataUsagePairs->encodedSourceIndex;
+            Il2CppMetadataUsage usage = GetEncodedIndexType(encodedSourceIndex);
+
+            if (usage == kIl2CppMetadataUsageStringLiteral) {
+                uint32_t decodedIndex = GetDecodedMethodIndex(encodedSourceIndex);
+                std::string pstring = il2cpp_Il2CppString_toCString(
+                        GetStringLiteralFromIndex(decodedIndex));
+                if (m_kIl2CppMetadataUsageStringLiteral) {
+                    // 存入 Map 并实时写入文件 (可选)
+                    m_kIl2CppMetadataUsageStringLiteral->insert({(int) destinationIndex, pstring});
+                }
+                if (m_outDumpstr) {
+                    char logBuffer[0x100] = {0};
+                    snprintf(logBuffer, sizeof(logBuffer), "decodedIndex[0x%08X]:", decodedIndex);
+                    m_outDumpstr->writeLine(logBuffer+pstring);
+                }
+            }
+        }
+    }
+#else
     for (size_t i = 0; i < m_pil2CppMetadataRegistration->metadataUsagesCount; i++) {
 
         uintptr_t* metadataPointer = reinterpret_cast<uintptr_t*>(m_pil2CppMetadataRegistration->metadataUsages[i]);
@@ -521,7 +629,7 @@ std::string li2cpp::li2cppDumper::dumpStr() {
             dump_RuntimeMetadata(metadataPointer);
         }
     }
-
+#endif
     // 写入完成后，如果需要在控制台显示统计，可以在这里处理
     return "";
 }
@@ -568,12 +676,12 @@ bool li2cpp::li2cppDumper::writeLog(std::string str) {
     }
 
     // 格式化输出，增加标识前缀
-    std::string out = "[SFK] : " + str;
+    //std::string out = "[SFK] : " + str;
 
 
-    LOG(LOG_LEVEL_INFO,"%s",str.c_str());
+    //LOG(LOG_LEVEL_INFO,"%s",str.c_str());
     // 调用你文件类 cMyfile 的接口写入一行
-    m_outlog->writeLine(out.c_str());
+    m_outlog->writeLine(str.c_str());
 
     // 实时冲刷缓冲区，防止日志丢失
     m_outlog->flush();
