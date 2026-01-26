@@ -93,7 +93,8 @@ namespace li2cppApi {
         const char* il2cpp_type_get_name(const Il2CppType *type);
         int il2cpp_class_get_rank(const Il2CppClass *klass); //获取数组的维度
         Il2CppClass* il2cpp_type_get_class_or_element_class(const Il2CppType *type);
-
+        void il2cpp_runtime_class_init(Il2CppClass* klass) ;
+        Il2CppClass* il2cpp_field_get_parent(FieldInfo *field);
     public:
         template<typename T>
         static inline bool IsRuntimeMetadataInitialized(T item);

@@ -3,7 +3,7 @@
 //
 
 #include "start.h"
-#include "./li2cpp Dumper/li2cppdumper.h"
+#include "./li2cppDumper/li2cppdumper.h"
 #include "./File/file.h"
 #include "./Log/log.h"
 #include "./interface/interface.h"
@@ -34,7 +34,7 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
                                      "curRegisterID");
         LOG(LOG_LEVEL_INFO,"curRegisterID : %d", curRegisterID);
 
-
+        /*
         //li2cpp::li2cppDumper li2CppDumperInfo(0,0,0,0,0);
         // 1. 创建对象并初始化
         // 这一步可能会因为构造函数内部的内存分配失败等原因抛出异常
@@ -50,6 +50,8 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
         // 这一步是您的主要操作，如果发生错误（如空指针解引用），
         // 并且该错误被设计为抛出 C++ 异常，就会被下面的 catch 捕获
         li2CppDumperInfo.initInfo();
+        */
+
 
         // 成功执行到这里
         return true;

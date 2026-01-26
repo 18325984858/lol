@@ -451,6 +451,19 @@ size_t li2cppApi::cUnityApi::il2cpp_field_get_offset(FieldInfo *field) {
     return m_ppil2cpp_field_get_offset(field);
 }
 
+void li2cppApi::cUnityApi::il2cpp_runtime_class_init(Il2CppClass* klass)  {
+
+    typedef void (*pil2cpp_runtime_class_init)(Il2CppClass* klass);
+    static pil2cpp_runtime_class_init m_ppil2cpp_runtime_class_init = nullptr;
+    if(m_ppil2cpp_runtime_class_init == nullptr){
+        m_ppil2cpp_runtime_class_init = (pil2cpp_runtime_class_init)m_li2cppso->find(
+                "il2cpp_runtime_class_init");
+        if (m_ppil2cpp_runtime_class_init) {
+        }
+    }
+    m_ppil2cpp_runtime_class_init(klass);
+}
+
 const PropertyInfo *
 li2cppApi::cUnityApi::il2cpp_class_get_properties(Il2CppClass *klass, void **iter) {
 
@@ -1146,6 +1159,23 @@ li2cppApi::cUnityApi::GetTypeDefinitionForIndex(TypeDefinitionIndex index) {
     IL2CPP_ASSERT(index >= 0 && static_cast<uint32_t>(index) < m_pGlobalMetadata->typeDefinitionsSize / sizeof(Il2CppTypeDefinition));
     const Il2CppTypeDefinition* typeDefinitions = (const Il2CppTypeDefinition*)((const char*)m_pGlobalMetadata + m_pGlobalMetadataHeader->typeDefinitionsOffset);
     return typeDefinitions + index;
+}
+
+Il2CppClass *li2cppApi::cUnityApi::il2cpp_field_get_parent(FieldInfo *field) {
+    typedef Il2CppClass* (*pil2cpp_field_get_parent)(FieldInfo *field);
+    static pil2cpp_field_get_parent m_ppil2cpp_field_get_parent = nullptr;
+    if (m_ppil2cpp_field_get_parent == nullptr) {
+        m_ppil2cpp_field_get_parent = (pil2cpp_field_get_parent)m_li2cppso->find(
+                "il2cpp_field_get_parent");
+        if (m_ppil2cpp_field_get_parent) {
+
+        }
+    }
+    // 4. 调用原始函数
+    if (m_ppil2cpp_field_get_parent) {
+        return m_ppil2cpp_field_get_parent(field);
+    }
+    return nullptr; // 找不到函数时返回安全值 ""
 }
 
 

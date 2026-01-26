@@ -93,7 +93,7 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         "Symbol/Symbol.cpp"
         "File/file.cpp"
         "UnityApi/unityapi.cpp"
-        "li2cpp Dumper/li2cppDumper.cpp"
+        "li2cppDumper/li2cppdumper.cpp"
         "lol/lolm.cpp"
         "interface/interface.cpp"
 )

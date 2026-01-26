@@ -70,25 +70,79 @@ void fun::function::initPackPath(std::string strPackName) {
 void*fun::function::GetStaticMember(std::string pMainModuleName, std::string pModuleName,
                                     std::string pClassName, std::string ptemplateName,
                                     std::string pStaticName) {
-
+    LOG(LOG_LEVEL_INFO,"GetStaticMember call");
     if(m_pClassInfo && !m_pClassInfo->empty()){
         for(auto&ite:*m_pClassInfo){
             //判断模块名是否一致，如果一致说明在此链表中
             if(*ite->m_ModuleData->m_pName == pModuleName){
+                LOG(LOG_LEVEL_INFO,"pModuleName : %s",pModuleName.c_str());
+
                 //指向当前模块存储的所有数据结构开头,遍历当前所有结构
                 for (auto&pClassStruct:*ite->m_pClassStruct) {
                     //判断类的名字，并判断泛型是否一致
                     if(*pClassStruct.m_pClassData->m_pName == pClassName &&
                        (ptemplateName.empty() ? 1 : *pClassStruct.m_pClassData->m_pGenericsName == ptemplateName)){
+
+                        LOG(LOG_LEVEL_INFO,"pClassName : %s ptemplateName : %s",pClassName.c_str(),ptemplateName.c_str());
+
                         //如果找到类就遍历类下面的静态成员名，
-                        for(auto&pStaticStruct:*pClassStruct.m_pVectorStaticData){
-                            if(*pStaticStruct->m_Data.m_pName == pStaticName){
-                                //如果都相等返回当前找到的指针
-                                FieldInfo *fieldInfo = (FieldInfo*)pStaticStruct->fieldInfo;
-                                uint64_t Value = 0;
-                                if(fieldInfo != nullptr) {
-                                    il2cpp_field_static_get_value(fieldInfo, &Value);
+                        for (auto& pStaticStruct : *pClassStruct.m_pVectorStaticData) {
+                            // 假设 m_pName 是 std::string 或 const char*，直接比较字符串内容
+                            if (*pStaticStruct->m_Data.m_pName == pStaticName) {
+
+                                // 1. 获取 FieldInfo 指针 (保留你的位运算逻辑)
+                                FieldInfo *fieldInfo = (FieldInfo*)((uint64_t)pStaticStruct->fieldInfo & 0x000000FFFFFFFFFF);
+
+                                // 2. 基础指针检查
+                                if (fieldInfo == nullptr) {
+                                    writeLog( "fieldInfo is nullptr for : "+ pStaticName);
+                                    return nullptr;
                                 }
+
+                                LOG(LOG_LEVEL_INFO, "Found Field: %s | fieldInfo: %p", pStaticName.c_str(), fieldInfo);
+                                writeLog( "Found Field: "+ pStaticName);
+                                // ================= 防御性检查核心 =================
+
+                                // 3. 获取该字段所属的类
+                                Il2CppClass* parentClass = il2cpp_field_get_parent(fieldInfo);
+                                if (parentClass == nullptr) {
+                                    writeLog( "Failed to get parent class for field: "+ pStaticName);
+                                    return nullptr;
+                                }
+
+                                // 4. 关键：检查类是否初始化 (static_fields 是否为空)
+                                // 如果类没有初始化，去读静态值 100% 导致崩溃
+                                if (parentClass->static_fields == nullptr) {
+                                    writeLog( "Class not initialized. Attempting to initialize: "+ pStaticName);
+
+
+                                    // 尝试手动初始化类
+                                    il2cpp_runtime_class_init(parentClass);
+
+                                    // 再次检查是否成功
+                                    if (parentClass->static_fields == nullptr) {
+                                        writeLog("Initialization failed. Cannot retrieve static value.");
+                                        return nullptr;
+                                    }
+                                }
+
+                                // 5. 再次检查该字段是否真的是静态字段 (双重保险)
+                                // 虽然你在 pVectorStaticData 里，但为了防止数据错乱，最好校验一下
+                                uint32_t attrs = il2cpp_field_get_flags(fieldInfo);
+                                if (!(attrs & FIELD_ATTRIBUTE_STATIC)) {
+                                    LOG(LOG_LEVEL_ERROR, "Field is not static!");
+                                    return nullptr;
+                                }
+
+                                // ================= 安全调用 =================
+
+                                uint64_t Value = 0;
+
+                                // 注意：这里仍然不需要 try-catch，因为上面的检查通过后，这里基本不会崩
+                                // 除非 fieldInfo 指针本身是野指针（那是上层数据源的问题）
+                                this->il2cpp_field_static_get_value(fieldInfo, &Value);
+
+                                LOG(LOG_LEVEL_INFO, "Get Value Success -> fieldInfo: %p Value: 0x%llX", fieldInfo, Value);
                                 return (void*)Value;
                             }
                         }
@@ -312,12 +366,46 @@ void fun::function::fillingClassInfo() {
                 const char* fieldName = il2cpp_field_get_name(field);
                 uint32_t offset = il2cpp_field_get_offset(field);
 
-                // 打印信息
-                //LOG(LOG_LEVEL_INFO, "    [Field] Name: %s, Offset: 0x%X", fieldName, offset);
-                Buf = "[Field] Name:";
-                Buf.append(fieldName);
-                writeLog(Buf);
-                AddVectorStaticData(pClassDataObj->m_pVectorStaticData, fieldName,field, (uint64_t)offset);
+                // 1. 获取字段属性标记
+                uint32_t attrs = il2cpp_field_get_flags(field);
+
+                // 2. 关键修复：只处理静态字段 (STATIC)
+                //if (!(attrs & FIELD_ATTRIBUTE_STATIC)) {
+                    // 如果是普通成员变量，直接跳过获取静态值的步骤，或者记录 offset 即可
+                    // AddVectorStaticData(...); // 如果你需要记录成员变量偏移，保留这行，但别取值
+                //    continue;
+                //}
+
+                // 3. 关键修复：确保类已经初始化，否则静态内存可能为空
+                // 注意：il2cpp_runtime_class_init 可能需要 include 相关头文件或通过 dlsym 获取
+                //il2cpp_runtime_class_init(const_cast<Il2CppClass *>(klass));
+
+                Buf = "[Static Field] Name:";
+                writeLog(Buf+fieldName);
+
+                // 4. 关键修复：分配内存缓冲区
+                // 静态字段的值可能是 int, float, struct, 或者 指针。
+                // 为了安全，我们通常准备一个足够大的缓冲区，或者只针对 Object 类型取指针。
+
+                // 获取字段类型
+                const Il2CppType* type = il2cpp_field_get_type(field);
+                uint32_t typeType = type->type; // 或 il2cpp_type_get_type(type)
+
+                // 准备一个足够容纳大多数基础类型的缓冲区 (64位下指针是8字节)
+                uint64_t buffer = 0;
+
+                // 调用 API，传入 buffer 的地址 (&buffer) 而不是 buffer 本身
+                //this->il2cpp_field_static_get_value(field, &buffer);
+
+                // 格式化输出
+                // 注意：如果该字段是结构体(struct)，这里只能打印出前8个字节，可能会乱码或不准确
+                // 但对于指针(String, List, Object)或基础类型(Int, Bool)，这是有效的
+                //sprintf(szBuf, " Value (ptr/int): 0x%llX", buffer);
+
+                //writeLog( szBuf);
+
+                // 记录数据
+                AddVectorStaticData(pClassDataObj->m_pVectorStaticData, fieldName, field, (uint64_t)offset);
             }
 
             // 6. 遍历方法 (Methods)
