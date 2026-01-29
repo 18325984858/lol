@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <android/log.h>
 
+#define MAX_BUF_VALUE 0x1000
+
 li2cpp::li2cppDumper::li2cppDumper(void* dqil2cppBase,
                                    void *pCodeRegistration,
                                    void *pMetadataRegistration,
@@ -219,9 +221,6 @@ std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type, int classInde
     else outPut << "class ";
 
     outPut << get_type_name(type);
-    if (classIndex >= 0) {
-        outPut << " // TypeDefIndex : " << classIndex;
-    }
 
     // 继承与接口
     std::vector<std::string> extends;
@@ -237,6 +236,10 @@ std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type, int classInde
     if (!extends.empty()) {
         outPut << " : " << extends[0];
         for (size_t i = 1; i < extends.size(); ++i) outPut << ", " << extends[i];
+    }
+
+    if (classIndex >= 0) {
+        outPut << " // TypeDefIndex : " << classIndex;
     }
 
     outPut << "\n{";
@@ -347,7 +350,7 @@ std::string li2cpp::li2cppDumper::dump_method(Il2CppClass *klass) {
                     std::string specName = get_method_space_name(elem->Spec);
 
                     // 优化布局：使用 └─ 符号，并统一十六进制宽度为 8 位（补零）
-                    char buffer[128];
+                    char buffer[MAX_BUF_VALUE] = {0};
                     snprintf(buffer, sizeof(buffer),
                              "\t//   └─ [Generic] RVA: 0x%08llX | Spec: %s\n",
                              (unsigned long long) elem->offset, specName.c_str());
