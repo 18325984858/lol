@@ -73,7 +73,14 @@ namespace lol {
         std::shared_ptr<std::map<uint32_t,std::shared_ptr<LolStrStruct>>> m_pMapStringIndex = nullptr;
     };
 
+    class FEVisi : public lol{
+    public:
+        FEVisi(const Il2CppGlobalMetadataHeader* pGlobalMetadataHeader = nullptr);
+        ~FEVisi();
 
+    private:
+
+    };
 
 }
 #endif //DOBBY_PROJECT_LOLM_H

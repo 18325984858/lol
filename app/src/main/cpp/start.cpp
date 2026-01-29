@@ -21,6 +21,7 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
             return false;
         }
 
+        /*FEvisi*/
 
         {
         LOG(LOG_LEVEL_INFO, "[Test MyStartPoint]MyStartPoint");
@@ -43,39 +44,57 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
                 if (elapsedTime >= interval) {
                     // 更新最后一次执行的时间点
                     lastUpdateTime = currentTime;
+                    {
+                        typedef bool (*get_BattleStartedpfn)();
+                        get_BattleStartedpfn pget_BattleStarted = (get_BattleStartedpfn)functionInfo.GetMethodFun("ilbil2cpp.so",
+                                                  "Assembly-CSharp.dll",
+                                                  "FEVisi",
+                                                  "FrameEngine.Visual.FEVisi",
+                                                  "get_BattleStarted");
+                        if(pget_BattleStarted){
+                           bool isOpening = pget_BattleStarted();
+                            LOG(LOG_LEVEL_INFO,"isOpening : %d",isOpening);
+                        }
+                        else{
+                            LOG(LOG_LEVEL_ERROR,"pget_BattleStarted 获取失败 : %d",pget_BattleStarted);
+                        }
 
-                    int *state = (int *) functionInfo.GetStaticMember(
-                            "ilbil2cpp.so",
-                            "Assembly-CSharp.dll",
-                            "BattleReadyState",
-                            "BattleReadyState",
-                            "state"
-                    );
 
-                    if (state != nullptr) {
-                        // 解引用获取实际值，注意内存安全
-                        LOG(LOG_LEVEL_INFO, "[Test Game] state Value: %p", state);
-                    } else {
-                        LOG(LOG_LEVEL_ERROR, "[Test Game] Failed to get state pointer");
-                    }
+                        /*
+                        int *state = (int *) functionInfo.GetStaticMember(
+                                "ilbil2cpp.so",
+                                "Assembly-CSharp.dll",
+                                "BattleReadyState",
+                                "BattleReadyState",
+                                "state"
+                        );
+
+                        if (state != nullptr) {
+                            // 解引用获取实际值，注意内存安全
+                            LOG(LOG_LEVEL_INFO, "[Test Game] state Value: %p", state);
+                        } else {
+                            LOG(LOG_LEVEL_ERROR, "[Test Game] Failed to get state pointer");
+                        }
 
 
-                    // --- 执行你的逻辑 ---
-                    // 注意：isGameInitialized 在你提供的 dump 中是成员变量 (0x10)，
-                    // 如果它是静态的，请确保 GetStaticMember 能够正确获取地址。
-                    int *nHeroNum = (int *) functionInfo.GetStaticMember(
-                            "ilbil2cpp.so",
-                            "Assembly-CSharp.dll",
-                            "ExtMSHeroSc",
-                            "star_def.ExtMSHeroSc",
-                            "nHeroNum"
-                    );
+                        // --- 执行你的逻辑 ---
+                        // 注意：isGameInitialized 在你提供的 dump 中是成员变量 (0x10)，
+                        // 如果它是静态的，请确保 GetStaticMember 能够正确获取地址。
+                        int *nHeroNum = (int *) functionInfo.GetStaticMember(
+                                "ilbil2cpp.so",
+                                "Assembly-CSharp.dll",
+                                "ExtMSHeroSc",
+                                "star_def.ExtMSHeroSc",
+                                "nHeroNum"
+                        );
 
-                    if (nHeroNum != nullptr) {
-                        // 解引用获取实际值，注意内存安全
-                        LOG(LOG_LEVEL_INFO, "[Test Game] nHeroNum Value: %p", nHeroNum);
-                    } else {
-                        LOG(LOG_LEVEL_ERROR, "[Test Game] Failed to get nHeroNum pointer");
+                        if (nHeroNum != nullptr) {
+                            // 解引用获取实际值，注意内存安全
+                            LOG(LOG_LEVEL_INFO, "[Test Game] nHeroNum Value: %p", nHeroNum);
+                        } else {
+                            LOG(LOG_LEVEL_ERROR, "[Test Game] Failed to get nHeroNum pointer");
+                        }
+                        */
                     }
                 }
                 // 短暂休眠以降低 CPU 占用，防止死循环跑满单核
