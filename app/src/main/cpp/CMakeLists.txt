@@ -63,7 +63,7 @@ elseif(${ANDROID_ABI} STREQUAL "x86_64")
 endif()
 
 # 设置C++标准
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
 
 
 find_library(

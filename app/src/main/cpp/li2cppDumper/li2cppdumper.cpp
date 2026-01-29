@@ -573,12 +573,9 @@ std::string li2cpp::li2cppDumper::get_method_modifier(uint32_t flags) {
  * 遍历元数据中的 StringLiteral
  */
 std::string li2cpp::li2cppDumper::dumpStr() {
-
-    LOG(LOG_LEVEL_INFO,"metadataUsagePairsCount : %d",m_pGlobalMetadataHeader->metadataUsagePairsCount);
-    LOG(LOG_LEVEL_INFO,"metadataUsagesCount : %zu",m_pil2CppMetadataRegistration->metadataUsagesCount);
-
 #ifdef UNITY_2018_4_16F1
-    int allCount = m_pGlobalMetadataHeader->metadataUsageListsCount/ sizeof(Il2CppMetadataUsageList);
+    int allCount = m_pGlobalMetadataHeader->metadataUsageListsCount/sizeof(Il2CppMetadataUsageList);
+    LOG(LOG_LEVEL_INFO,"[DumpStr] metadataUsageListsCount : %d allCount : %d", m_pGlobalMetadataHeader->metadataUsageListsCount,allCount);
     for (int i = 0; i < allCount; ++i) {
         Il2CppMetadataUsageList *metadataUsageLists = (Il2CppMetadataUsageList *) (
                 (uint64_t) m_pGlobalMetadata
@@ -613,7 +610,7 @@ std::string li2cpp::li2cppDumper::dumpStr() {
                 }
                 if (m_outDumpstr) {
                     char logBuffer[0x100] = {0};
-                    snprintf(logBuffer, sizeof(logBuffer), "decodedIndex[0x%08X]:", decodedIndex);
+                    snprintf(logBuffer, sizeof(logBuffer), "Index[0x%08X]:", i);
                     m_outDumpstr->writeLine(logBuffer+pstring);
                 }
             }

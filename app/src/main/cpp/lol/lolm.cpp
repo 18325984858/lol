@@ -61,8 +61,8 @@ void* lol::lol::inItStringindexTable(const Il2CppGlobalMetadataHeader* pGlobalMe
     uint32_t tableSize = (((stringCount >> 3) & 0x3FFFFFFFCLL) + 4) & 0x3FFFFFFFCLL;
 
 
-    //LOG(LOG_LEVEL_INFO,"pGlobalMetadataHeader : %p stringCount ：%d tableSize : %d",
-    //    pGlobalMetadataHeader,stringCount,tableSize);
+    LOG(LOG_LEVEL_INFO,"[DumpStr] pGlobalMetadataHeader : %p stringCount ：%d tableSize : %d",
+       pGlobalMetadataHeader,stringCount,tableSize);
 
     //初始化表用与记录那些字符串已经解密了
     if(this->parrayStringIndex == nullptr){
@@ -89,9 +89,14 @@ bool lol::lol::IsEncryptionOrIsDecryption(uint32_t nameIndex) {
 }
 
 lol::lol::lol(const Il2CppGlobalMetadataHeader* pGlobalMetadataHeader) {
+
+    LOG(LOG_LEVEL_INFO,"[DumpStr] lol Init pGlobalMetadataHeader : %p",pGlobalMetadataHeader);
+
     if(pGlobalMetadataHeader) {
         this->inItStringindexTable(pGlobalMetadataHeader);
     }
+
+    LOG(LOG_LEVEL_INFO,"[DumpStr] lol Init Success! ");
 }
 
 lol::lol::~lol() {

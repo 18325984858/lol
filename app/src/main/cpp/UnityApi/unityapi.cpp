@@ -23,6 +23,9 @@ li2cppApi::cUnityApi::cUnityApi(void*dqil2cppBase,
         m_pGlobalMetadataHeader(pGlobalMetadataHeader),
         m_pMetadataImagesTable(pMetadataImagesTable)
 {
+
+    LOG(LOG_LEVEL_INFO,"pCodeRegistration :%p pMetadataRegistration:%p pGlobalMetadataHeader:%p",pCodeRegistration,pMetadataRegistration,pGlobalMetadataHeader);
+
     if(m_li2cppso == nullptr){
         m_li2cppso = std::make_shared<Symbol::Symbol>("libil2cpp.so");
     }
@@ -30,6 +33,8 @@ li2cppApi::cUnityApi::cUnityApi(void*dqil2cppBase,
         m_lolgame = std::make_shared<lol::lol>(
                 (const Il2CppGlobalMetadataHeader *) pGlobalMetadataHeader);
     }
+
+    LOG(LOG_LEVEL_INFO,"[DumpStr] cUnityApi Init Success! ");
 }
 
 uint64_t li2cppApi::cUnityApi::Getil2cppModuleBase() {
@@ -837,9 +842,8 @@ Il2CppString *li2cppApi::cUnityApi::GetStringLiteralFromIndex(StringLiteralIndex
     Il2CppString* newString = nullptr;
 
 #ifdef UNITY_2018_4_16F1
-
     // 原始地址: 000000000B9BBE1B
-// 大小: 256 bytes
+    // 大小: 256 bytes
     const uint8_t byte_B9BBE1B[256] = {
             0xC4, 0xCA, 0x42, 0x38, 0xA0, 0xB9, 0x23, 0x82, 0x0D, 0xCC, 0x50, 0x9A, 0x6F, 0x75, 0x84, 0x9B,
             0xC8, 0x1E, 0x72, 0x8D, 0x9D, 0x4C, 0x2F, 0x63, 0x6F, 0x06, 0x7F, 0x89, 0xCC, 0x14, 0x86, 0x2C,

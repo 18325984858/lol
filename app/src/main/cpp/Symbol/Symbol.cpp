@@ -8,10 +8,12 @@
 
 
 Symbol::Symbol::Symbol(const std::string & sopath):m_sopath(sopath),m_Mmodule(nullptr) {
+    LOG(LOG_LEVEL_INFO,"[DumpStr] Symbol Init ");
     m_addressMap = std::make_shared<std::map<std::string,void*>>();
     if(m_addressMap){
-        //LOG(LOG_LEVEL_INFO,"m_addressMap Init Success!");
+        //LOG(LOG_LEVEL_INFO,"[DumpStr] m_addressMap Init Success!");
     }
+    LOG(LOG_LEVEL_INFO,"[DumpStr] Symbol Init Success!");
 }
 
 void* Symbol::Symbol::find(const std::string& symbolName) {

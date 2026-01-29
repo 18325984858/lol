@@ -166,21 +166,19 @@ void *elf_ctx_iterate_symbol_table(elf_ctx_t *ctx, const char *symbol_name) {
 
 void *resolve_elf_internal_symbol(const char *library_name, const char *symbol_name) {
   void *result = NULL;
-
+  LOG(LOG_LEVEL_INFO, "[Test MyStartPoint] resolve_elf_internal_symbol library_name :%s symbol_name : %s",library_name,symbol_name);
   if (library_name) {
     RuntimeModule module = ProcessRuntimeUtility::GetProcessModule(library_name);
 
     if (module.load_address) {
       auto mmapFileMng = MmapFileManager(module.path);
       auto file_mem = mmapFileMng.map();
-
       elf_ctx_t ctx;
       memset(&ctx, 0, sizeof(elf_ctx_t));
       if (file_mem) {
         elf_ctx_init(&ctx, file_mem);
         result = elf_ctx_iterate_symbol_table(&ctx, symbol_name);
       }
-
       if (result)
         result = (void *)((addr_t)result + (addr_t)module.load_address - ((addr_t)file_mem - (addr_t)ctx.load_bias));
     }
@@ -188,6 +186,7 @@ void *resolve_elf_internal_symbol(const char *library_name, const char *symbol_n
 
   if (!result) {
     auto ProcessModuleMap = ProcessRuntimeUtility::GetProcessModuleMap();
+      LOG(LOG_LEVEL_INFO, "[Test MyStartPoint]-----------------------------");
     for (auto module : ProcessModuleMap) {
 
       if (module.load_address) {
@@ -209,6 +208,8 @@ void *resolve_elf_internal_symbol(const char *library_name, const char *symbol_n
         break;
     }
   }
+
+    LOG(LOG_LEVEL_INFO, "[Test MyStartPoint] resolve_elf_internal_symbol Exit : %p ",result);
   return result;
 }
 
@@ -229,10 +230,13 @@ PUBLIC void *DobbySymbolResolver(const char *image_name, const char *symbol_name
     }
   }
 #endif
+    LOG(LOG_LEVEL_INFO, "[Test MyStartPoint]-----------------------------");
   result = dlsym(RTLD_DEFAULT, symbol_name_pattern);
+    LOG(LOG_LEVEL_INFO, "[Test MyStartPoint]-----------------------------");
   if (result)
     return result;
-
+    LOG(LOG_LEVEL_INFO, "[Test MyStartPoint]-----------------------------");
   result = resolve_elf_internal_symbol(image_name, symbol_name_pattern);
+    LOG(LOG_LEVEL_INFO, "[Test MyStartPoint]-----------------------------");
   return result;
 }

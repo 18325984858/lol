@@ -1343,25 +1343,7 @@ typedef struct Il2CppWindowsRuntimeFactoryTableEntry
     const Il2CppType* type;
     Il2CppMethodPointer createFactoryFunction;
 } Il2CppWindowsRuntimeFactoryTableEntry;
-//typedef struct Il2CppCodeRegistration
-//{
-//    uint32_t methodPointersCount;
-//    const Il2CppMethodPointer* methodPointers;
-//    uint32_t reversePInvokeWrapperCount;
-//    const Il2CppMethodPointer* reversePInvokeWrappers;
-//    uint32_t genericMethodPointersCount;
-//    const Il2CppMethodPointer* genericMethodPointers;
-//    uint32_t invokerPointersCount;
-//    const InvokerMethod* invokerPointers;
-//    CustomAttributeIndex customAttributeCount;
-//    const CustomAttributesCacheGenerator* customAttributeGenerators;
-//    uint32_t unresolvedVirtualCallCount;
-//    const Il2CppMethodPointer* unresolvedVirtualCallPointers;
-//    uint32_t interopDataCount;
-//    Il2CppInteropData* interopData;
-//    uint32_t windowsRuntimeFactoryCount;
-//    Il2CppWindowsRuntimeFactoryTableEntry* windowsRuntimeFactoryTable;
-//} Il2CppCodeRegistration;
+
 typedef struct Il2CppCodeRegistration
 {
     uint32_t unresolvedVirtualCallCount;
