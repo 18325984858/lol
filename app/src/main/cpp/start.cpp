@@ -6,12 +6,56 @@
 #include "./li2cppDumper/li2cppdumper.h"
 #include "./File/file.h"
 #include "./Log/log.h"
-#include "./interface/interface.h"
+#include "./lol/lolm.h"
 #include <chrono>
 #include <thread>
 
 #define _SOURCE_SO_PATH_ "libdobbyproject.so"
 #define _Det_PACK_PATH_ "com.DefaultCompany.Demo1"
+
+/// 假设这是你的监控逻辑函数
+// 我们将对象指针传入，以便线程能访问其成员
+void RunMonitoring(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
+                   void *pGlobalMetadataHeader,void*pMetadataImagesTable) {
+    // 设置 2 秒的检查间隔
+    const std::chrono::milliseconds interval(4000);
+
+    lol::lol lol(pli2cppModeBase,pCodeRegistration,
+                 pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
+    int nFlags = lol.get_BattleStarted();
+    while (true) {
+        // --- 业务逻辑执行区 ---
+        if(nFlags){
+        LOG(LOG_LEVEL_INFO,"[TEST GAME] 成功进入对局 %p",lol.get_battleTeamMgr());
+        }else{
+            nFlags = lol.get_BattleStarted();
+        }
+
+        // -----------------------
+
+        // 线程休眠 4 秒后再进行下一次循环
+        // 这种方式比手动计算 elapsedTime 更简洁且 CPU 占用极低
+        std::this_thread::sleep_for(interval);
+    }
+}
+
+void Dumper(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
+            void *pGlobalMetadataHeader,void*pMetadataImagesTable){
+    // 1. 创建对象并初始化
+    // 这一步可能会因为构造函数内部的内存分配失败等原因抛出异常
+    li2cpp::li2cppDumper li2CppDumperInfo(
+            pli2cppModeBase,
+            pCodeRegistration,
+            pMetadataRegistration,
+            pGlobalMetadataHeader,
+            pMetadataImagesTable
+    );
+
+    // 2. 初始化信息
+    // 这一步是您的主要操作，如果发生错误（如空指针解引用），
+    // 并且该错误被设计为抛出 C++ 异常，就会被下面的 catch 捕获
+    li2CppDumperInfo.initInfo();
+}
 
 bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
                   void *pGlobalMetadataHeader,void*pMetadataImagesTable){
@@ -25,100 +69,18 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
         {
         LOG(LOG_LEVEL_INFO, "[Test MyStartPoint]MyStartPoint");
-        fun::function functionInfo(pli2cppModeBase,
-                                   pCodeRegistration,
-                                   pMetadataRegistration,
-                                   pGlobalMetadataHeader);
-        functionInfo.fillingClassInfo();
 
-            // 获取当前时间点
-            auto lastUpdateTime = std::chrono::steady_clock::now();
-            const std::chrono::milliseconds interval(2000); // 设定间隔为 2000 毫秒 (2秒)
+            // 3. 创建并启动线程
+            // 将 pDumper 作为参数传递给线程
+            std::thread monitorThread(RunMonitoring,pli2cppModeBase,pCodeRegistration,
+                                      pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
 
-            while (true) {
-                auto currentTime = std::chrono::steady_clock::now();
-
-                // 计算当前时间与上次执行时间的偏差
-                auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastUpdateTime);
-
-                if (elapsedTime >= interval) {
-                    // 更新最后一次执行的时间点
-                    lastUpdateTime = currentTime;
-                    {
-                        typedef bool (*get_BattleStartedpfn)();
-                        get_BattleStartedpfn pget_BattleStarted = (get_BattleStartedpfn)functionInfo.GetMethodFun("ilbil2cpp.so",
-                                                  "Assembly-CSharp.dll",
-                                                  "FEVisi",
-                                                  "FrameEngine.Visual.FEVisi",
-                                                  "get_BattleStarted");
-                        if(pget_BattleStarted){
-                           bool isOpening = pget_BattleStarted();
-                            LOG(LOG_LEVEL_INFO,"isOpening : %d",isOpening);
-                        }
-                        else{
-                            LOG(LOG_LEVEL_ERROR,"pget_BattleStarted 获取失败 : %d",pget_BattleStarted);
-                        }
-
-
-                        /*
-                        int *state = (int *) functionInfo.GetStaticMember(
-                                "ilbil2cpp.so",
-                                "Assembly-CSharp.dll",
-                                "BattleReadyState",
-                                "BattleReadyState",
-                                "state"
-                        );
-
-                        if (state != nullptr) {
-                            // 解引用获取实际值，注意内存安全
-                            LOG(LOG_LEVEL_INFO, "[Test Game] state Value: %p", state);
-                        } else {
-                            LOG(LOG_LEVEL_ERROR, "[Test Game] Failed to get state pointer");
-                        }
-
-
-                        // --- 执行你的逻辑 ---
-                        // 注意：isGameInitialized 在你提供的 dump 中是成员变量 (0x10)，
-                        // 如果它是静态的，请确保 GetStaticMember 能够正确获取地址。
-                        int *nHeroNum = (int *) functionInfo.GetStaticMember(
-                                "ilbil2cpp.so",
-                                "Assembly-CSharp.dll",
-                                "ExtMSHeroSc",
-                                "star_def.ExtMSHeroSc",
-                                "nHeroNum"
-                        );
-
-                        if (nHeroNum != nullptr) {
-                            // 解引用获取实际值，注意内存安全
-                            LOG(LOG_LEVEL_INFO, "[Test Game] nHeroNum Value: %p", nHeroNum);
-                        } else {
-                            LOG(LOG_LEVEL_ERROR, "[Test Game] Failed to get nHeroNum pointer");
-                        }
-                        */
-                    }
-                }
-                // 短暂休眠以降低 CPU 占用，防止死循环跑满单核
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-
+            // 4. 分离线程
+            monitorThread.detach();
         }
-   /*
-        //li2cpp::li2cppDumper li2CppDumperInfo(0,0,0,0,0);
-        // 1. 创建对象并初始化
-        // 这一步可能会因为构造函数内部的内存分配失败等原因抛出异常
-        li2cpp::li2cppDumper li2CppDumperInfo(
-                pli2cppModeBase,
-                pCodeRegistration,
-                pMetadataRegistration,
-                pGlobalMetadataHeader,
-                pMetadataImagesTable
-        );
-
-        // 2. 初始化信息
-        // 这一步是您的主要操作，如果发生错误（如空指针解引用），
-        // 并且该错误被设计为抛出 C++ 异常，就会被下面的 catch 捕获
-        li2CppDumperInfo.initInfo();
-*/
+    /*
+    Dumperpli2cppModeBase,pCodeRegistration,pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
+    */
         // 成功执行到这里
         return true;
 

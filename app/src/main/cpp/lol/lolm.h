@@ -8,6 +8,7 @@
 #include <iostream>
 #include <stdint.h>
 #include <map>
+#include "../interface/interface.h"
 
 struct Il2CppGlobalMetadataHeader;
 
@@ -59,9 +60,31 @@ namespace lol {
         std::string srcStr;
     }LolStrStruct,*PLolStrStruct;
 
-    class lol {
+    class FEVisi{
     public:
-        lol(const Il2CppGlobalMetadataHeader* pGlobalMetadataHeader = nullptr);
+        FEVisi(void* dqil2cppBase=nullptr,
+               void *pCodeRegistration=nullptr,
+               void *pMetadataRegistration=nullptr,
+               void *pGlobalMetadataHeader=nullptr,
+               void* pMetadataImagesTable=nullptr);
+        ~FEVisi();
+    public:
+        //判断是否在对局中
+        bool get_BattleStarted();
+        //获取所有玩家的信息
+        void* get_battleTeamMgr();
+    private:
+        std::shared_ptr<fun::function> m_pfunctionInfo;
+    };
+
+
+    class lol: public FEVisi {
+    public:
+        lol(void* dqil2cppBase=nullptr,
+            void *pCodeRegistration=nullptr,
+            void *pMetadataRegistration=nullptr,
+            void *pGlobalMetadataHeader=nullptr,
+            void* pMetadataImagesTable=nullptr);
         ~lol();
     public:
         std::string decryPtthestring(char*Srcstr, uint32_t nameIndex);
@@ -72,15 +95,5 @@ namespace lol {
         void*parrayStringIndex = NULL;
         std::shared_ptr<std::map<uint32_t,std::shared_ptr<LolStrStruct>>> m_pMapStringIndex = nullptr;
     };
-
-    class FEVisi : public lol{
-    public:
-        FEVisi(const Il2CppGlobalMetadataHeader* pGlobalMetadataHeader = nullptr);
-        ~FEVisi();
-
-    private:
-
-    };
-
 }
 #endif //DOBBY_PROJECT_LOLM_H

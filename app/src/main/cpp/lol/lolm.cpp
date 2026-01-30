@@ -88,12 +88,16 @@ bool lol::lol::IsEncryptionOrIsDecryption(uint32_t nameIndex) {
     return (IsEncryption & IsDecryption) == 0;
 }
 
-lol::lol::lol(const Il2CppGlobalMetadataHeader* pGlobalMetadataHeader) {
+lol::lol::lol(void* dqil2cppBase,void *pCodeRegistration,
+              void *pMetadataRegistration,void *pGlobalMetadataHeader,
+              void* pMetadataImagesTable):
+              FEVisi(dqil2cppBase,pCodeRegistration,pMetadataRegistration,
+                     pGlobalMetadataHeader,pMetadataImagesTable){
 
     LOG(LOG_LEVEL_INFO,"[DumpStr] lol Init pGlobalMetadataHeader : %p",pGlobalMetadataHeader);
 
     if(pGlobalMetadataHeader) {
-        this->inItStringindexTable(pGlobalMetadataHeader);
+        this->inItStringindexTable(static_cast<const Il2CppGlobalMetadataHeader *>(pGlobalMetadataHeader));
     }
 
     LOG(LOG_LEVEL_INFO,"[DumpStr] lol Init Success! ");
@@ -112,4 +116,61 @@ lol::lol::~lol() {
         this->m_pMapStringIndex->clear();
         this->m_pMapStringIndex= nullptr;
     }
+}
+
+lol::FEVisi::FEVisi(void* dqil2cppBase,void *pCodeRegistration,void *pMetadataRegistration,
+                    void *pGlobalMetadataHeader,void* pMetadataImagesTable) {
+
+    // 放弃使用 make_shared
+    // 直接使用 shared_ptr 的构造函数
+    m_pfunctionInfo = std::shared_ptr<fun::function>(new fun::function(
+            (void*)dqil2cppBase,
+            (void*)pCodeRegistration,
+            (void*)pMetadataRegistration,
+            (void*)pGlobalMetadataHeader,
+            (void*)pMetadataImagesTable
+    ));
+    if(m_pfunctionInfo == nullptr){
+        LOG(LOG_LEVEL_ERROR,"[Test Game] FEVisi 构造函数失败");
+    }
+
+    //初始化填充数据
+    m_pfunctionInfo->fillingClassInfo();
+}
+
+lol::FEVisi::~FEVisi() {
+    if(m_pfunctionInfo){
+        m_pfunctionInfo = NULL;
+    }
+}
+
+bool lol::FEVisi::get_BattleStarted() {
+    bool isOpening = false;
+    typedef bool (*get_BattleStartedpfn)();
+    get_BattleStartedpfn pget_BattleStarted = (get_BattleStartedpfn)m_pfunctionInfo->GetMethodFun(
+            "ilbil2cpp.so",
+            "Assembly-CSharp.dll",
+            "FEVisi",
+            "FrameEngine.Visual.FEVisi",
+            "get_BattleStarted");
+    if(pget_BattleStarted){
+         isOpening = pget_BattleStarted();
+    }
+    return isOpening;
+}
+
+void *lol::FEVisi::get_battleTeamMgr() {
+    typedef void* (*get_battleTeamMgrpfn)();
+    void*pData = nullptr;
+
+    get_battleTeamMgrpfn get_battleTeamMgrfun = (get_battleTeamMgrpfn)m_pfunctionInfo->GetMethodFun(
+            "ilbil2cpp.so",
+            "Assembly-CSharp.dll",
+            "FEVisi",
+            "FrameEngine.Visual.FEVisi",
+            "get_battleTeamMgr");
+    if(get_battleTeamMgrfun){
+        pData = get_battleTeamMgrfun();
+    }
+    return pData;
 }

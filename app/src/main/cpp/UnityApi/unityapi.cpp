@@ -29,10 +29,16 @@ li2cppApi::cUnityApi::cUnityApi(void*dqil2cppBase,
     if(m_li2cppso == nullptr){
         m_li2cppso = std::make_shared<Symbol::Symbol>("libil2cpp.so");
     }
+
+
+    // 此处删除
+    // 因为lol类已被作为主类
+    /*
     if(m_lolgame == nullptr) {
         m_lolgame = std::make_shared<lol::lol>(
                 (const Il2CppGlobalMetadataHeader *) pGlobalMetadataHeader);
     }
+    */
 
     LOG(LOG_LEVEL_INFO,"[DumpStr] cUnityApi Init Success! ");
 }

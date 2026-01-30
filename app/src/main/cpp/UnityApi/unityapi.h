@@ -12,7 +12,6 @@
 
 #ifdef UNITY_2018_4_16F1
 #include "../UnityStruct/unity2018-4-16f1/UnityStructInfo.h"
-#include "../lol/lolm.h"
 #else
 #include "../UnityStruct/UnityInfo.h"
 #endif
@@ -116,7 +115,7 @@ namespace li2cppApi {
         std::shared_ptr<Symbol::Symbol> m_li2cppso = nullptr;
         uint64_t m_il2cppbase = 0;
     public:
-        std::shared_ptr<lol::lol> m_lolgame = nullptr;
+        //std::shared_ptr<lol::lol> m_lolgame = nullptr;
         void* m_pGlobalMetadata =nullptr;
         Il2CppGlobalMetadataHeader *m_pGlobalMetadataHeader = nullptr;
         Il2CppMetadataRegistration *m_pil2CppMetadataRegistration = nullptr;
