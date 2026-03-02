@@ -96,6 +96,7 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         "li2cppDumper/li2cppdumper.cpp"
         "lol/lolm.cpp"
         "interface/interface.cpp"
+        "il2cppHeader/il2cppHeader.cpp"
 )
 
 # Specifies libraries CMake should link to your target library. You

@@ -4,6 +4,7 @@
 
 #include "start.h"
 #include "./li2cppDumper/li2cppdumper.h"
+#include "./il2cppHeader/il2cppHeader.h"
 #include "./File/file.h"
 #include "./Log/log.h"
 #include "./lol/lolm.h"
@@ -30,7 +31,6 @@ void RunMonitoring(void *pli2cppModeBase, void *pCodeRegistration, void *pMetada
         }else{
             nFlags = lol.get_BattleStarted();
         }
-
         // -----------------------
 
         // 线程休眠 4 秒后再进行下一次循环
@@ -41,6 +41,9 @@ void RunMonitoring(void *pli2cppModeBase, void *pCodeRegistration, void *pMetada
 
 void Dumper(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
             void *pGlobalMetadataHeader,void*pMetadataImagesTable){
+
+    LOG(LOG_LEVEL_INFO,"[DUMPER] Start Dumper!");
+
     // 1. 创建对象并初始化
     // 这一步可能会因为构造函数内部的内存分配失败等原因抛出异常
     li2cpp::li2cppDumper li2CppDumperInfo(
@@ -55,6 +58,24 @@ void Dumper(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegis
     // 这一步是您的主要操作，如果发生错误（如空指针解引用），
     // 并且该错误被设计为抛出 C++ 异常，就会被下面的 catch 捕获
     li2CppDumperInfo.initInfo();
+    LOG(LOG_LEVEL_INFO,"[DUMPER] Dumper End!");
+}
+
+void DumperHeader(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
+                  void *pGlobalMetadataHeader,void*pMetadataImagesTable) {
+    LOG(LOG_LEVEL_INFO,"[DUMPER] Start DumperHeader!");
+
+    li2cppHeader::li2cppHeader li2cppHeaderInfo(
+            pli2cppModeBase,
+            pCodeRegistration,
+            pMetadataRegistration,
+            pGlobalMetadataHeader,
+            pMetadataImagesTable
+    );
+
+    li2cppHeaderInfo.start();
+
+    LOG(LOG_LEVEL_INFO,"[DUMPER] DumperHeader End!");
 }
 
 bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
@@ -65,25 +86,32 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
             return false;
         }
 
-        /*FEvisi*/
-
         {
         LOG(LOG_LEVEL_INFO, "[Test MyStartPoint]MyStartPoint");
 
             // 3. 创建并启动线程
             // 将 pDumper 作为参数传递给线程
-            std::thread monitorThread(RunMonitoring,pli2cppModeBase,pCodeRegistration,
+            std::thread monitorThread(DumperHeader,pli2cppModeBase,pCodeRegistration,
                                       pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
 
             // 4. 分离线程
             monitorThread.detach();
+
+
+            // 3. 创建并启动线程
+            // 将 pDumper 作为参数传递给线程
+            //std::thread monitorThread1(Dumper,pli2cppModeBase,pCodeRegistration,
+            //                          pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
+
+            // 4. 分离线程
+            //monitorThread1.detach();
+
         }
-    /*
-    Dumperpli2cppModeBase,pCodeRegistration,pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
-    */
+
+        //Dumper(pli2cppModeBase,pCodeRegistration,pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
+
         // 成功执行到这里
         return true;
-
     }
         // 【开始 catch 块】
         // 捕获所有继承自 std::exception 的标准异常

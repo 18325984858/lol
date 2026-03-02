@@ -37,6 +37,8 @@ namespace li2cppApi {
         const char* il2cpp_image_get_name(const Il2CppImage *image);//获取模块名称
         const char* il2cpp_class_get_namespace(Il2CppClass *klass); //获取命名空间
         Il2CppClass* il2cpp_class_get_parent(Il2CppClass *klass); //获取父类型
+        int32_t il2cpp_class_instance_size(Il2CppClass *klass);
+
         Il2CppClass* il2cpp_class_get_declaring_type(Il2CppClass* klass); //获取外围类型
         bool il2cpp_class_is_abstract(const Il2CppClass *klass);//判断是否是抽象类
         bool il2cpp_class_is_interface(const Il2CppClass *klass);//判断是否是接口
@@ -94,6 +96,7 @@ namespace li2cppApi {
         Il2CppClass* il2cpp_type_get_class_or_element_class(const Il2CppType *type);
         void il2cpp_runtime_class_init(Il2CppClass* klass) ;
         Il2CppClass* il2cpp_field_get_parent(FieldInfo *field);
+        void* il2cpp_class_init_all_method(Il2CppClass* klass);
     public:
         template<typename T>
         static inline bool IsRuntimeMetadataInitialized(T item);

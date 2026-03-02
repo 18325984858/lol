@@ -110,6 +110,22 @@ Il2CppDomain *li2cppApi::cUnityApi::il2cpp_domain_get() {
     return m_ppil2cpp_domain_get();
 }
 
+int32_t li2cppApi::cUnityApi::il2cpp_class_instance_size(Il2CppClass *klass)
+{
+    //il2cpp_assembly_get_image函数指针
+    typedef int32_t (*pil2cpp_class_instance_size)(Il2CppClass *klass);
+    static pil2cpp_class_instance_size m_ppil2cpp_class_instance_size = nullptr;
+
+    if(m_ppil2cpp_class_instance_size == nullptr){
+        m_ppil2cpp_class_instance_size = (pil2cpp_class_instance_size) m_li2cppso->find(
+                "il2cpp_class_instance_size");
+        if (m_ppil2cpp_class_instance_size) {
+
+        }
+    }
+    return m_ppil2cpp_class_instance_size(klass);
+}
+
 const Il2CppImage *li2cppApi::cUnityApi::il2cpp_assembly_get_image(const Il2CppAssembly *assembly) {
     //il2cpp_assembly_get_image函数指针
     typedef const Il2CppImage* (*pil2cpp_assembly_get_image)(const Il2CppAssembly *assembly);
@@ -1188,5 +1204,21 @@ Il2CppClass *li2cppApi::cUnityApi::il2cpp_field_get_parent(FieldInfo *field) {
     return nullptr; // 找不到函数时返回安全值 ""
 }
 
+void* li2cppApi::cUnityApi::il2cpp_class_init_all_method(Il2CppClass* klass){
+    typedef void* (*pil2cpp_class_init_all_method)(Il2CppClass *klass);
+    static pil2cpp_class_init_all_method m_ppil2cpp_class_init_all_method = nullptr;
+    if (m_ppil2cpp_class_init_all_method == nullptr) {
+        m_ppil2cpp_class_init_all_method = (pil2cpp_class_init_all_method)m_li2cppso->find(
+                "il2cpp_class_init_all_method");
+        if (m_ppil2cpp_class_init_all_method) {
+
+        }
+    }
+    // 4. 调用原始函数
+    if (m_ppil2cpp_class_init_all_method) {
+        return m_ppil2cpp_class_init_all_method(klass);
+    }
+    return nullptr; // 找不到函数时返回安全值 ""
+}
 
 

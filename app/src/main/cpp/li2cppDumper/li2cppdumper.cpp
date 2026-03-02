@@ -137,7 +137,6 @@ std::string li2cpp::li2cppDumper::get_type_name(const Il2CppType* type) {
         rankStr += "]";
 
         return get_type_name(il2cpp_class_get_type(il2cpp_type_get_class_or_element_class(type)));
-        //return get_type_name(type->data.array->etype) + rankStr + suffix;
     }
 
     switch (type->type) {

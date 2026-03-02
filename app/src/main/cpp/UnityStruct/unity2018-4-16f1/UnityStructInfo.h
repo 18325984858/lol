@@ -1,4 +1,4 @@
-
+#pragma once
 /*
  * Field Attributes (21.1.5).
  */
