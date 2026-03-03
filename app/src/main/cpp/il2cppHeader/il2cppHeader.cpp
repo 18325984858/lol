@@ -5,7 +5,15 @@
 #include "il2cppHeader.h"
 #include "../Log/log.h"
 #include <regex>
+#include <sstream>
+#include <fstream>
 
+std::string IntToHex(uint32_t value) {
+    std::stringstream ss;
+    // 使用 std::uppercase 可以输出 0x1A 而不是 0x1a
+    ss << "0x" << std::uppercase << std::hex << value;
+    return ss.str();
+}
 
 li2cppHeader::li2cppHeader::li2cppHeader(void *dqil2cppBase, void *pCodeRegistration,
                                          void *pMetadataRegistration, void *pGlobalMetadataHeader,
@@ -32,8 +40,12 @@ li2cppHeader::li2cppHeader::~li2cppHeader() {
 void li2cppHeader::li2cppHeader::start() {
     LOG(LOG_LEVEL_INFO, "[li2cppHeader] >>> Entering: %s", __FUNCTION__);
 
+    // 1. 初始化并解析所有类
     Init(m_classMap);
 
+    // 2. 遍历完成后，保存到文件
+    // 这里建议使用 SD 卡路径或 Data 目录路径
+    SaveToIdaHeader(nullptr);
 
     LOG(LOG_LEVEL_INFO, "[li2cppHeader] <<< Exiting: %s", __FUNCTION__);
 }
@@ -190,53 +202,211 @@ void li2cppHeader::li2cppHeader::DumpFields(Il2CppClass* klass, std::shared_ptr<
     void* iter = nullptr;
     FieldInfo* field = nullptr;
 
-    // 记录开始处理该类的字段
-    LOG(LOG_LEVEL_INFO, "  [Fields] Dumping fields for class: %s", unityClass->className.c_str());
+    // 记录上一个字段的末尾位置，用于计算 Padding
+    // Il2Cpp 对象头部（klass + monitor）在 64 位下占用 0x10 (16字节)
+    uint32_t currentOffset = 0x10;
 
-    // 1. 使用 il2cpp 迭代器遍历
     while ((field = il2cpp_class_get_fields(klass, &iter))) {
-        // 2. 提取基础元数据
         const char* fieldName = il2cpp_field_get_name(field);
-        auto type = il2cpp_field_get_type(field);
+        const Il2CppType* type = il2cpp_field_get_type(field);
         uint32_t flags = il2cpp_field_get_flags(field);
-
-        // 3. 提取类型名称
-        std::string typeName = "Unknown_Type";
-        if (type) {
-            char* rawTypeName = const_cast<char *>(il2cpp_type_get_name(type));
-            if (rawTypeName) {
-                typeName = rawTypeName;
-                // il2cpp_free(rawTypeName); // 根据你的 NDK 版本决定是否释放
-            }
-        }
-
-        // 4. 计算偏移与静态属性
-        // FIELD_ATTRIBUTE_STATIC = 0x0010
-        bool isStatic = (flags & 0x0010) != 0;
         uint32_t offset = il2cpp_field_get_offset(field);
-        uintptr_t staticAddr = 0;
+        bool isStatic = (flags & 0x0010) != 0;
 
-        if (isStatic) {
-            // 获取静态字段所在的内存地址 (注意：只有在类初始化后此地址才有效)
-            staticAddr = reinterpret_cast<uintptr_t>(field);
+        // 1. 处理实例字段的 Padding
+        if (!isStatic && offset > currentOffset) {
+            uint32_t paddingSize = offset - currentOffset;
+            std::string padName = "pad_0x" + IntToHex(currentOffset);
+            unityClass->fields.emplace_back(padName, "uint8_t[" + std::to_string(paddingSize) + "]", currentOffset, false, 0);
         }
 
-        // 5. 封装到你定义的 UnityField 结构体中
-        // 使用你定义的构造函数: UnityField(name, typeName, offset, isStatic, staticAddr)
+        // 2. 获取 IDA 兼容的类型名 (调用之前的 GetIdaTypeName)
+        std::string idaTypeName = GetIdaCompatibleType(type);
+
+        // 3. 存储到结构体
         unityClass->fields.emplace_back(
                 fieldName ? fieldName : "Unnamed_Field",
-                typeName,
+                idaTypeName,
                 offset,
                 isStatic,
-                staticAddr
+                isStatic ? reinterpret_cast<uintptr_t>(field) : 0
         );
 
-        // 6. 打印日志
-        // 格式：[Field] [S] Offset: 0x10 | Type: int | Name: _count
-        LOG(LOG_LEVEL_INFO, "    [Field]%s Offset: 0x%03X | Type: %-20s | Name: %s",
-            isStatic ? " [Static]" : "         ",
-            offset,
-            typeName.c_str(),
-            fieldName ? fieldName : "Unnamed");
+        // 4. 更新当前偏移位置 (仅针对实例字段)
+        if (!isStatic) {
+            // 粗略估算字段占用大小，也可以使用 il2cpp_class_instance_size 处理 ValueType
+            // 这里简单处理：指针对齐 8 字节，基础类型按实际大小
+            currentOffset = offset + GetTypeSize(type);
+        }
+
+        LOG(LOG_LEVEL_INFO, "  [Field] %s | Offset: 0x%X | Type: %s", fieldName, offset, idaTypeName.c_str());
     }
+}
+
+std::string li2cppHeader::li2cppHeader::GetIdaCompatibleType(const Il2CppType* type) {
+    if (!type) return "void*";
+
+    // 获取底层枚举类型 (IL2CPP_TYPE_I4, IL2CPP_TYPE_CLASS 等)
+    Il2CppTypeEnum typeEnum = type->type;
+
+    switch (typeEnum) {
+        case IL2CPP_TYPE_VOID:     return "void";
+        case IL2CPP_TYPE_BOOLEAN:  return "bool";
+        case IL2CPP_TYPE_CHAR:     return "uint16_t"; // C# Char
+        case IL2CPP_TYPE_I1:       return "int8_t";
+        case IL2CPP_TYPE_U1:       return "uint8_t";
+        case IL2CPP_TYPE_I2:       return "int16_t";
+        case IL2CPP_TYPE_U2:       return "uint16_t";
+        case IL2CPP_TYPE_I4:       return "int32_t";
+        case IL2CPP_TYPE_U4:       return "uint32_t";
+        case IL2CPP_TYPE_I8:       return "int64_t";
+        case IL2CPP_TYPE_U8:       return "uint64_t";
+        case IL2CPP_TYPE_R4:       return "float";
+        case IL2CPP_TYPE_R8:       return "double";
+        case IL2CPP_TYPE_STRING:   return "struct String_o*";
+        case IL2CPP_TYPE_PTR:      return "void*";
+        case IL2CPP_TYPE_FNPTR:    return "void*";
+        case IL2CPP_TYPE_OBJECT:   return "struct System_Object_o*";
+
+        case IL2CPP_TYPE_SZARRAY: {
+            // 处理一维数组
+            Il2CppClass* elementKlass = il2cpp_class_from_type(type->data.type);
+            std::string name = CleanName(elementKlass);
+            return "struct " + name + "_array*";
+        }
+
+        case IL2CPP_TYPE_CLASS: {
+            // 处理引用类型
+            Il2CppClass* klass = il2cpp_class_from_type(type);
+            return "struct " + CleanName(klass) + "_o*";
+        }
+
+        case IL2CPP_TYPE_VALUETYPE: {
+            // 关键：识别结构体 (ValueType)
+            Il2CppClass* klass = il2cpp_class_from_type(type);
+            if (il2cpp_class_is_enum(klass)) {
+                // 如果是枚举，IDA 通常识别为 int32_t
+                return "int32_t";
+            }
+            // 注意：作为字段时，结构体是平铺的，不带星号
+            return "struct " + CleanName(klass) + "_Fields";
+        }
+
+        case IL2CPP_TYPE_GENERICINST: {
+            // 处理泛型实例
+            Il2CppClass* klass = il2cpp_class_from_type(type);
+            return "struct " + CleanName(klass) + "_o*";
+        }
+
+        default:
+            return "void*";
+    }
+}
+
+uint32_t li2cppHeader::li2cppHeader::GetTypeSize(const Il2CppType* type) {
+    switch (type->type) {
+        case IL2CPP_TYPE_BOOLEAN:
+        case IL2CPP_TYPE_I1:
+        case IL2CPP_TYPE_U1:       return 1;
+        case IL2CPP_TYPE_I2:
+        case IL2CPP_TYPE_U2:
+        case IL2CPP_TYPE_CHAR:     return 2;
+        case IL2CPP_TYPE_I4:
+        case IL2CPP_TYPE_U4:
+        case IL2CPP_TYPE_R4:       return 4;
+        case IL2CPP_TYPE_I8:
+        case IL2CPP_TYPE_U8:
+        case IL2CPP_TYPE_R8:       return 8;
+        case IL2CPP_TYPE_VALUETYPE: {
+            Il2CppClass* klass = il2cpp_class_from_type(type);
+            return il2cpp_class_instance_size(klass) - 0x10; // 减去对象头偏移
+        }
+        default: return 8; // 指针、类、数组在 64 位下均为 8 字节
+    }
+}
+
+std::string li2cppHeader::li2cppHeader::CleanName(Il2CppClass* klass) {
+    const char* ns = il2cpp_class_get_namespace(klass);
+    const char* name = il2cpp_class_get_name(klass);
+    std::string fullName = (ns && strlen(ns) > 0) ? (std::string(ns) + "_" + name) : name;
+
+    // 替换所有 IDA 不支持的字符
+    for (char &c : fullName) {
+        if (c == '.' || c == '`' || c == '<' || c == '>' || c == '/') c = '_';
+    }
+    return fullName;
+}
+
+void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
+    std::ofstream fout(path);
+    if (!fout.is_open()) {
+        LOG(LOG_LEVEL_ERROR, "Failed to open export file: %s", path.c_str());
+        return;
+    }
+
+    // 1. 基础环境定义
+    fout << "/* Generated by Gemini UnityDump */\n";
+    fout << "#include <stdint.h>\n\n";
+    fout << "typedef struct VirtualInvokeData { void* methodPtr; void* method; } VirtualInvokeData;\n";
+    fout << "typedef struct Il2CppObject { struct Il2CppClass_c *klass; void *monitor; } Il2CppObject;\n";
+    fout << "typedef struct Il2CppArrayBounds { uintptr_t length; uintptr_t lower_bound; } Il2CppArrayBounds;\n";
+    fout << "typedef struct String_o { Il2CppObject obj; int32_t length; uint16_t chars[0]; } String_o;\n\n";
+
+    // 2. 前置声明：所有类都预先声明其 _o, _c, _Fields 结构
+    fout << "/* --- Forward Declarations --- */\n";
+    for (auto const& [key, cls] : m_classMap) {
+        // 使用你的 CleanName 逻辑生成安全名称
+        std::string sn = CleanName(reinterpret_cast<Il2CppClass*>(cls->klassPtr));
+        fout << "typedef struct " << sn << "_o " << sn << "_o;\n";
+        fout << "typedef struct " << sn << "_c " << sn << "_c;\n";
+        fout << "typedef struct " << sn << "_Fields " << sn << "_Fields;\n";
+    }
+
+    // 3. 详细定义
+    fout << "\n/* --- Type Definitions --- */\n";
+    for (auto const& [key, cls] : m_classMap) {
+        std::string sn = CleanName(reinterpret_cast<Il2CppClass*>(cls->klassPtr));
+
+        fout << "/* Assembly: " << cls->assembly << " | Namespace: " << cls->namespc << " */\n";
+
+        // A. 字段结构定义 (包含 Padding)
+        fout << "struct " << sn << "_Fields {\n";
+        for (const auto& field : cls->fields) {
+            if (field.isStatic) continue; // 实例结构体不含静态字段
+            fout << "    " << field.typeName << " " << field.name << "; // " << IntToHex(field.offset) << "\n";
+        }
+        fout << "};\n";
+
+        // B. VTable 结构定义 (根据存储的方法列表)
+        fout << "struct " << sn << "_VTable {\n";
+        if (cls->methods.empty()) {
+            fout << "    VirtualInvokeData vtable[32]; // Placeholder\n";
+        } else {
+            for (size_t i = 0; i < cls->methods.size(); ++i) {
+                fout << "    VirtualInvokeData " << CleanName(reinterpret_cast<Il2CppClass*>(cls->klassPtr)) << "_" << i << ";\n";
+            }
+        }
+        fout << "};\n";
+
+        // C. 类结构 (klass/static) 定义
+        fout << "struct " << sn << "_c {\n";
+        fout << "    void* image;\n";
+        fout << "    void* gc_desc;\n";
+        fout << "    const char* name;\n";
+        fout << "    const char* namespc;\n";
+        fout << "    uint32_t flags;\n";
+        fout << "    uint32_t instance_size;\n";
+        fout << "    struct " << sn << "_VTable vtable;\n";
+        fout << "};\n";
+
+        // D. 实例对象结构定义
+        fout << "struct " << sn << "_o {\n";
+        fout << "    struct " << sn << "_c *klass;\n";
+        fout << "    void *monitor;\n";
+        fout << "    struct " << sn << "_Fields fields;\n";
+        fout << "};\n\n";
+    }
+
+    fout.close();
+    LOG(LOG_LEVEL_INFO, "[li2cppHeader] Successfully saved %zu classes to %s", m_classMap.size(), path.size());
 }

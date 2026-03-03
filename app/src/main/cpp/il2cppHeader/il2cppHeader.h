@@ -120,7 +120,10 @@ namespace li2cppHeader {
         void Init( std::map<std::string, std::shared_ptr<UnityClass>>& classMap);
         std::string GetClassUniqueName( std::map<std::string, std::shared_ptr<UnityClass>>& classMap, std::shared_ptr<UnityClass>& targetClass,const Il2CppType* type);
         void DumpFields(Il2CppClass* klass, std::shared_ptr<UnityClass>& unityClass);
-
+        std::string GetIdaCompatibleType(const Il2CppType* type);
+        std::string CleanName(Il2CppClass* klass);
+        uint32_t GetTypeSize(const Il2CppType* type);
+        void SaveToIdaHeader(const std::string& path);
     private:
         uint64_t m_il2cppbase = 0;
         void* m_pGlobalMetadata =nullptr;
