@@ -34,7 +34,21 @@ li2cppHeader::li2cppHeader::li2cppHeader(void *dqil2cppBase, void *pCodeRegistra
 }
 
 li2cppHeader::li2cppHeader::~li2cppHeader() {
+    LOG(LOG_LEVEL_INFO, "[li2cppHeader] >>> Exiting and Cleaning up resources...");
 
+    // 1. 清空类信息 Map
+    // 由于使用了 std::shared_ptr，clear() 会导致引用计数减 1
+    // 当计数归零时，UnityClass 及其内部的 vector (fields, methods) 会自动释放内存
+    m_classMap.clear();
+
+    // 2. 指针置空（虽然对象即将销毁，但这是个好习惯，防止野指针）
+    m_pGlobalMetadata = nullptr;
+    m_pGlobalMetadataHeader = nullptr;
+    m_pil2CppMetadataRegistration = nullptr;
+    m_pIl2CppCodeRegistration = nullptr;
+    m_pMetadataImagesTable = nullptr;
+
+    LOG(LOG_LEVEL_INFO, "[li2cppHeader] Cleanup finished.");
 }
 
 void li2cppHeader::li2cppHeader::start() {
@@ -45,7 +59,9 @@ void li2cppHeader::li2cppHeader::start() {
 
     // 2. 遍历完成后，保存到文件
     // 这里建议使用 SD 卡路径或 Data 目录路径
-    SaveToIdaHeader(nullptr);
+    SaveToIdaHeader("/data/data/"+m_packname+"/files/il2cpp.h");
+
+    SaveToMethodJson("/data/data/"+m_packname+"/files/script.json");
 
     LOG(LOG_LEVEL_INFO, "[li2cppHeader] <<< Exiting: %s", __FUNCTION__);
 }
@@ -56,8 +72,6 @@ std::string li2cppHeader::li2cppHeader::GetClassUniqueName(
         const Il2CppType *type) {
 
     if (!type) return "Unknown_Class";
-
-
 
     // 1. 获取当前类型的基本信息
     Il2CppClass* klass = il2cpp_type_get_class_or_element_class(type);
@@ -108,7 +122,7 @@ std::string li2cppHeader::li2cppHeader::GetClassUniqueName(
 
 
 void li2cppHeader::li2cppHeader::Init(
-        std::map<std::string, std::shared_ptr<UnityClass>> &classMap) { // 注意：这里去掉了 const 因为我们要填充它
+        std::map<std::string, std::shared_ptr<UnityClass>> &classMap) {
 
     LOG(LOG_LEVEL_INFO, "[li2cppHeader] >>> Entering: %s", __FUNCTION__);
 
@@ -125,11 +139,15 @@ void li2cppHeader::li2cppHeader::Init(
             auto klass = il2cpp_image_get_class(image, j);
             if (!klass) continue;
 
-            // 1. 基本信息提取
+            // 1. 统一获取经过清洗的唯一名称 (内部已处理 Namespace 和点号)
+            // 这一步是解决 "前缀冗余" 的关键：所有地方都必须用这个函数获取名字
+            std::string uniqueName = GetSafeUniqueName(const_cast<Il2CppClass *>(klass));
+
+            // 2. 提取基本信息
             const char* namespc = il2cpp_class_get_namespace(const_cast<Il2CppClass *>(klass));
             const char* name = il2cpp_class_get_name(const_cast<Il2CppClass *>(klass));
 
-            // 2. 创建 UnityClass 实例 (使用智能指针)
+            // 3. 创建 UnityClass 实例
             auto unityClass = std::make_shared<UnityClass>(
                     namespc ? namespc : "",
                     name ? name : "",
@@ -140,60 +158,36 @@ void li2cppHeader::li2cppHeader::Init(
             unityClass->instanceSize = il2cpp_class_instance_size(const_cast<Il2CppClass *>(klass));
             unityClass->flags = il2cpp_class_get_flags(klass);
 
-            // 3. 处理父类继承关系
+            // 4. 处理父类继承
             auto parent = il2cpp_class_get_parent(const_cast<Il2CppClass *>(klass));
             if (parent) {
                 unityClass->parentPtr = reinterpret_cast<uintptr_t>(parent);
-                // 如果需要记录父类名字，可以进一步调用 il2cpp_class_get_name(parent)
             }
 
-            // 4. 处理类型属性（是否是值类型/结构体）
-            // --- 替换原有的 bool 赋值 ---
-
-            // 获取 IL2CPP 原生状态
+            // 5. 处理类型属性 (位域存储)
             bool isValueType = il2cpp_class_is_valuetype(klass);
             bool isEnum = il2cpp_class_is_enum(klass);
-
-            // 使用位域进行存储
             unityClass->typeAttr.bits.isValueType = isValueType;
             unityClass->typeAttr.bits.isEnum = isEnum;
-
-            // 在 Unity/C# 中，Struct 是 ValueType 但不是 Enum
             unityClass->typeAttr.bits.isStruct = isValueType && !isEnum;
-
-            // 补充：判断是否为接口 (Interface)
-            // TYPE_ATTRIBUTE_INTERFACE 通常为 0x00000020
             unityClass->typeAttr.bits.isInterface = (unityClass->flags & 0x00000020);
 
-            // --- 这样你的 typeAttr.raw 就会自动根据这些 bits 的设置而改变 ---
-
-            // 5. 获取详细类型名（含泛型参数）
-            // il2cpp_type_get_name 会返回类似 "List<int>" 的字符串
-            auto type = il2cpp_class_get_type(const_cast<Il2CppClass *>(klass));
-            const char* typeName = il2cpp_type_get_name(type);
-            if (typeName) {
-                // 如果是泛型，这里的 typeName 会包含 <T> 信息
-                // 你可以把它存入你的 unityClass 中
-                // il2cpp_free(typeName); // 注意：某些版本需要手动释放该字符串
-            }
-
-            // 6. 生成唯一键并存入 Map
-            std::string uniqueName = GetClassUniqueName(classMap, unityClass,type);
-
-            LOG(LOG_LEVEL_INFO,"uniqueName %s",uniqueName.c_str());
-
-            //获取成员
+            // 6. 获取成员 (注意：DumpFields 内部调用的 GetIdaCompatibleType 也要改)
+            // 确保 DumpFields 内部引用其他类时，也是调用 GetSafeUniqueName
             DumpFields(const_cast<Il2CppClass *>(klass), unityClass);
 
+            // --- 新增：获取成员方法 ---
+            DumpMethods(const_cast<Il2CppClass *>(klass), unityClass);
+
+            //存入 Map
+            // uniqueName 是经过 CleanIdentifier 处理的，例如 "FrameEngine_Logic_BattleTeam"
             classMap[uniqueName] = unityClass;
-            
-            // 打印调试信息（可选，类太多时建议关闭）
-            // LOG(LOG_LEVEL_DEBUG, "Dumped class: %s", uniqueName.c_str());
+
+            LOG(LOG_LEVEL_INFO, "[li2cppHeader] Processed: %s", uniqueName.c_str());
         }
     }
 
-    LOG(LOG_LEVEL_INFO, "[li2cppHeader] <<< Exiting: %s, Total Classes: %zu",
-        __FUNCTION__, classMap.size());
+    LOG(LOG_LEVEL_INFO, "[li2cppHeader] <<< Exiting: %s, Total: %zu", __FUNCTION__, classMap.size());
 }
 
 void li2cppHeader::li2cppHeader::DumpFields(Il2CppClass* klass, std::shared_ptr<UnityClass>& unityClass) {
@@ -263,43 +257,30 @@ std::string li2cppHeader::li2cppHeader::GetIdaCompatibleType(const Il2CppType* t
         case IL2CPP_TYPE_U8:       return "uint64_t";
         case IL2CPP_TYPE_R4:       return "float";
         case IL2CPP_TYPE_R8:       return "double";
-        case IL2CPP_TYPE_STRING:   return "struct String_o*";
+        case IL2CPP_TYPE_STRING:   return "String_o*";
         case IL2CPP_TYPE_PTR:      return "void*";
         case IL2CPP_TYPE_FNPTR:    return "void*";
-        case IL2CPP_TYPE_OBJECT:   return "struct System_Object_o*";
+        case IL2CPP_TYPE_OBJECT:  return "struct System_Object_o*";
 
         case IL2CPP_TYPE_SZARRAY: {
-            // 处理一维数组
             Il2CppClass* elementKlass = il2cpp_class_from_type(type->data.type);
-            std::string name = CleanName(elementKlass);
-            return "struct " + name + "_array*";
+            // 直接使用 GetSafeUniqueName，不再手动拼前缀
+            return "struct " + GetSafeUniqueName(elementKlass) + "_array*";
         }
 
-        case IL2CPP_TYPE_CLASS: {
-            // 处理引用类型
+        case IL2CPP_TYPE_CLASS:
+        case IL2CPP_TYPE_GENERICINST: {
             Il2CppClass* klass = il2cpp_class_from_type(type);
-            return "struct " + CleanName(klass) + "_o*";
+            return "struct " + GetSafeUniqueName(klass) + "_o*"; // 直接用，不要拼
         }
 
         case IL2CPP_TYPE_VALUETYPE: {
-            // 关键：识别结构体 (ValueType)
             Il2CppClass* klass = il2cpp_class_from_type(type);
-            if (il2cpp_class_is_enum(klass)) {
-                // 如果是枚举，IDA 通常识别为 int32_t
-                return "int32_t";
-            }
-            // 注意：作为字段时，结构体是平铺的，不带星号
-            return "struct " + CleanName(klass) + "_Fields";
+            if (il2cpp_class_is_enum(klass)) return "int32_t";
+            return "struct " + GetSafeUniqueName(klass) + "_Fields";
         }
 
-        case IL2CPP_TYPE_GENERICINST: {
-            // 处理泛型实例
-            Il2CppClass* klass = il2cpp_class_from_type(type);
-            return "struct " + CleanName(klass) + "_o*";
-        }
-
-        default:
-            return "void*";
+        default: return "void*";
     }
 }
 
@@ -325,88 +306,258 @@ uint32_t li2cppHeader::li2cppHeader::GetTypeSize(const Il2CppType* type) {
     }
 }
 
-std::string li2cppHeader::li2cppHeader::CleanName(Il2CppClass* klass) {
-    const char* ns = il2cpp_class_get_namespace(klass);
-    const char* name = il2cpp_class_get_name(klass);
-    std::string fullName = (ns && strlen(ns) > 0) ? (std::string(ns) + "_" + name) : name;
+/**
+ * 递归解析 IL2CPP 类型名，并转换为 IDA 安全的标识符
+ * 目标：处理嵌套泛型，如 Dictionary<string, List<int>> -> Dictionary_string_List_int_
+ */
+std::string li2cppHeader::li2cppHeader::GetSafeGenericName(const Il2CppType* type) {
+    if (!type) return "UnknownType";
 
-    // 替换所有 IDA 不支持的字符
+    // 1. 获取基础类型名 (IL2CPP 会返回类似 List<int> 或 List`1 的字符串)
+    char* rawName = const_cast<char *>(il2cpp_type_get_name(type));
+    std::string fullName = rawName ? rawName : "Unnamed";
+    // 注意：某些环境下 il2cpp_type_get_name 返回的内存需要释放，根据你的 il2cpp 版本决定是否调用 il2cpp_free
+
+    // 2. 特殊符号全量清洗
+    // 我们需要把所有 C 语言结构体命名中非法的字符替换为下划线
+    // 关键字符：< > (泛型), [ ] (数组/泛型), , (参数分隔), ` (泛型计数), . (命名空间)
     for (char &c : fullName) {
-        if (c == '.' || c == '`' || c == '<' || c == '>' || c == '/') c = '_';
+        if (c == '<' || c == '>' || c == '[' || c == ']' ||
+            c == ',' || c == '`' || c == '.' || c == '+' ||
+            c == '/' || c == ' ' || c == '*' || c == ':') {
+            c = '_';
+        }
     }
+
+    // 3. 规范化处理：去除连续下划线，使名字更美观
+    // 正则替换： "___" -> "_"
+    fullName = std::regex_replace(fullName, std::regex("_{2,}"), "_");
+
+    // 4. 去除首尾可能多余的下划线
+    if (!fullName.empty() && fullName[0] == '_') fullName.erase(0, 1);
+    if (!fullName.empty() && fullName.back() == '_') fullName.pop_back();
+
     return fullName;
+}
+
+
+/**
+ * 优化后的唯一名获取：内部直接调用清洗函数
+ */
+std::string li2cppHeader::li2cppHeader::GetSafeUniqueName(Il2CppClass* klass) {
+    if (!klass) return "Il2CppObject";
+
+    const Il2CppType* type = il2cpp_class_get_type(klass);
+    char* rawName = const_cast<char *>(il2cpp_type_get_name(type));
+
+    // 如果 rawName 已经包含命名空间(通常点号分隔)，CleanIdentifier 会把它变下划线
+    std::string fullName = rawName ? rawName : il2cpp_class_get_name(klass);
+
+    // 如果发现 rawName 不带命名空间，再手动补一下
+    if (fullName.find('.') == std::string::npos) {
+        const char* ns = il2cpp_class_get_namespace(klass);
+        if (ns && strlen(ns) > 0) {
+            fullName = std::string(ns) + "_" + fullName;
+        }
+    }
+
+    return CleanIdentifier(fullName);
+}
+
+/**
+ * 核心清洗函数：将所有非法字符替换为下划线，并压缩连续下划线
+ */
+std::string li2cppHeader::li2cppHeader::CleanIdentifier(std::string name) {
+    for (char &c : name) {
+        // 替换点号、尖括号、方括号、逗号、空格等所有 C 语法不支持的符号
+        if (c == '.' || c == '<' || c == '>' || c == '`' ||
+            c == ',' || c == '[' || c == ']' || c == '+' ||
+            c == '/' || c == ' ' || c == '*' || c == ':' || c == '-') {
+            c = '_';
+        }
+    }
+    // 使用正则压缩连续的下划线，防止出现 ____
+    name = std::regex_replace(name, std::regex("_{2,}"), "_");
+
+    // 移除首尾多余的下划线
+    if (!name.empty() && name[0] == '_') name.erase(0, 1);
+    if (!name.empty() && name.back() == '_') name.pop_back();
+
+    return name;
 }
 
 void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
     std::ofstream fout(path);
-    if (!fout.is_open()) {
-        LOG(LOG_LEVEL_ERROR, "Failed to open export file: %s", path.c_str());
-        return;
-    }
+    if (!fout.is_open()) return;
 
-    // 1. 基础环境定义
-    fout << "/* Generated by Gemini UnityDump */\n";
+    // 1. 基础结构定义
+    fout << "/* Generated by Gemini | Corrected Version */\n";
     fout << "#include <stdint.h>\n\n";
     fout << "typedef struct VirtualInvokeData { void* methodPtr; void* method; } VirtualInvokeData;\n";
+    fout << "typedef struct Il2CppClass_c Il2CppClass_c;\n";
     fout << "typedef struct Il2CppObject { struct Il2CppClass_c *klass; void *monitor; } Il2CppObject;\n";
     fout << "typedef struct Il2CppArrayBounds { uintptr_t length; uintptr_t lower_bound; } Il2CppArrayBounds;\n";
     fout << "typedef struct String_o { Il2CppObject obj; int32_t length; uint16_t chars[0]; } String_o;\n\n";
 
-    // 2. 前置声明：所有类都预先声明其 _o, _c, _Fields 结构
+    // 2. 前置声明：使用 uniqueKey (它是已经 CleanIdentifier 过的)
     fout << "/* --- Forward Declarations --- */\n";
-    for (auto const& [key, cls] : m_classMap) {
-        // 使用你的 CleanName 逻辑生成安全名称
-        std::string sn = CleanName(reinterpret_cast<Il2CppClass*>(cls->klassPtr));
-        fout << "typedef struct " << sn << "_o " << sn << "_o;\n";
-        fout << "typedef struct " << sn << "_c " << sn << "_c;\n";
-        fout << "typedef struct " << sn << "_Fields " << sn << "_Fields;\n";
+    for (auto const& [uniqueKey, cls] : m_classMap) {
+        fout << "typedef struct " << uniqueKey << "_o " << uniqueKey << "_o;\n";
+        fout << "typedef struct " << uniqueKey << "_c " << uniqueKey << "_c;\n";
+        fout << "typedef struct " << uniqueKey << "_Fields " << uniqueKey << "_Fields;\n";
+        fout << "typedef struct " << uniqueKey << "_StaticFields " << uniqueKey << "_StaticFields;\n";
+        fout << "typedef struct " << uniqueKey << "_array " << uniqueKey << "_array;\n";
     }
 
-    // 3. 详细定义
-    fout << "\n/* --- Type Definitions --- */\n";
-    for (auto const& [key, cls] : m_classMap) {
-        std::string sn = CleanName(reinterpret_cast<Il2CppClass*>(cls->klassPtr));
+    // 3. 详细结构定义
+    for (auto const& [uniqueKey, cls] : m_classMap) {
+        // 修正 1: 使用 cls->className 代替 cls->name
+        fout << "\n/* --- " << (cls->namespc.empty() ? "Global" : cls->namespc) << "::" << cls->className << " --- */\n";
 
-        fout << "/* Assembly: " << cls->assembly << " | Namespace: " << cls->namespc << " */\n";
-
-        // A. 字段结构定义 (包含 Padding)
-        fout << "struct " << sn << "_Fields {\n";
+        // A. 静态字段
+        fout << "struct " << uniqueKey << "_StaticFields {\n";
+        bool hasStatic = false;
         for (const auto& field : cls->fields) {
-            if (field.isStatic) continue; // 实例结构体不含静态字段
-            fout << "    " << field.typeName << " " << field.name << "; // " << IntToHex(field.offset) << "\n";
+            if (field.isStatic) {
+                // 修正 2: 使用 field.staticAddr 代替 field.metadataPtr
+                fout << "    " << field.typeName << " " << field.name << "; // Addr: " << IntToHex(field.staticAddr) << "\n";
+                hasStatic = true;
+            }
         }
+        if (!hasStatic) fout << "    char unused;\n";
         fout << "};\n";
 
-        // B. VTable 结构定义 (根据存储的方法列表)
-        fout << "struct " << sn << "_VTable {\n";
-        if (cls->methods.empty()) {
-            fout << "    VirtualInvokeData vtable[32]; // Placeholder\n";
+        // B. 实例字段
+        fout << "struct " << uniqueKey << "_Fields {\n";
+        if (cls->fields.empty()) {
+            fout << "    char padding[1];\n";
         } else {
-            for (size_t i = 0; i < cls->methods.size(); ++i) {
-                fout << "    VirtualInvokeData " << CleanName(reinterpret_cast<Il2CppClass*>(cls->klassPtr)) << "_" << i << ";\n";
+            for (const auto& field : cls->fields) {
+                if (field.isStatic) continue;
+                // 确保 field.typeName 在生成时也调用了 CleanIdentifier 处理
+                fout << "    " << field.typeName << " " << field.name << "; // Offset: " << IntToHex(field.offset) << "\n";
             }
         }
         fout << "};\n";
 
-        // C. 类结构 (klass/static) 定义
-        fout << "struct " << sn << "_c {\n";
-        fout << "    void* image;\n";
-        fout << "    void* gc_desc;\n";
-        fout << "    const char* name;\n";
-        fout << "    const char* namespc;\n";
-        fout << "    uint32_t flags;\n";
-        fout << "    uint32_t instance_size;\n";
-        fout << "    struct " << sn << "_VTable vtable;\n";
+        fout << "/* Methods for " << uniqueKey << " */\n";
+        for (const auto& method : cls->methods) {
+            fout << "// " << method.returnType << " " << method.name << "(";
+            for (size_t k = 0; k < method.parameterTypes.size(); ++k) {
+                fout << method.parameterTypes[k] << (k == method.parameterTypes.size() - 1 ? "" : ", ");
+            }
+            // 打印相对于 il2cpp 模块基址的偏移 (假设 m_il2cppbase 已设置)
+            uintptr_t offset = (method.methodPointer != 0) ? (method.methodPointer - m_il2cppbase) : 0;
+            fout << "); // RVA: " << IntToHex(offset) << " | Token: " << IntToHex(method.token) << "\n";
+        }
+
+        // C. 类信息
+        fout << "struct " << uniqueKey << "_c {\n";
+        fout << "    void* image; void* gc_desc; const char* name; const char* namespc;\n";
+        fout << "    uint32_t flags; uint16_t instance_size; uint16_t actualSize;\n";
+        fout << "    struct " << uniqueKey << "_StaticFields* static_fields;\n";
+        fout << "    VirtualInvokeData vtable[32];\n";
         fout << "};\n";
 
-        // D. 实例对象结构定义
-        fout << "struct " << sn << "_o {\n";
-        fout << "    struct " << sn << "_c *klass;\n";
+        // D. 实例对象
+        fout << "struct " << uniqueKey << "_o {\n";
+        fout << "    struct " << uniqueKey << "_c *klass;\n";
         fout << "    void *monitor;\n";
-        fout << "    struct " << sn << "_Fields fields;\n";
-        fout << "};\n\n";
+        fout << "    struct " << uniqueKey << "_Fields fields;\n";
+        fout << "};\n";
+
+        // E. 数组对象
+        fout << "struct " << uniqueKey << "_array {\n";
+        fout << "    Il2CppObject obj; Il2CppArrayBounds *bounds; uintptr_t max_length;\n";
+        fout << "    struct " << uniqueKey << "_o* m_Items[0];\n";
+        fout << "};\n";
     }
 
     fout.close();
-    LOG(LOG_LEVEL_INFO, "[li2cppHeader] Successfully saved %zu classes to %s", m_classMap.size(), path.size());
+}
+
+std::string li2cppHeader::li2cppHeader::GetTypeAbbreviation(const std::string& type) {
+    if (type == "void") return "v";
+    if (type == "bool") return "b";
+    if (type == "int32_t" || type == "uint32_t") return "i";
+    if (type == "int64_t" || type == "uint64_t") return "j";
+    if (type == "float") return "f";
+    if (type == "double") return "d";
+    if (type.find('*') != std::string::npos) return "i"; // 指针在 IL2CPP 中通常视为 native int (i)
+    return "i"; // 默认作为对象/指针处理
+}
+
+void li2cppHeader::li2cppHeader::DumpMethods(Il2CppClass* klass, std::shared_ptr<UnityClass>& unityClass) {
+    void* iter = nullptr;
+    const MethodInfo* method = nullptr;
+    std::string classSafeName = GetSafeUniqueName(klass);
+
+    while ((method = il2cpp_class_get_methods(klass, &iter))) {
+        uintptr_t addr = reinterpret_cast<uintptr_t>(method->methodPointer);
+        if (addr == 0) continue; // 跳过没有实现的虚方法或抽象方法
+
+        const char* mName = il2cpp_method_get_name(method);
+        const Il2CppType* retType = il2cpp_method_get_return_type(method);
+        std::string retTypeName = GetIdaCompatibleType(retType);
+
+        UnityMethod uMethod(mName, retTypeName, addr, method->token);
+
+        // --- 生成 TypeSignature (如 viii) ---
+        uMethod.typeSignature = GetTypeAbbreviation(retTypeName);
+
+        // --- 生成 Signature ---
+        // 格式：ReturnType Class_Method (ThisType __this, Params...);
+        std::string sig = retTypeName + " " + classSafeName + "_" + CleanIdentifier(mName) + " (";
+
+        // 注入 __this 指针 (实例方法)
+        sig += classSafeName + "_o* __this";
+        uMethod.typeSignature += "i"; // __this 也是一个指针
+
+        uint32_t pCount = il2cpp_method_get_param_count(method);
+        for (uint32_t i = 0; i < pCount; ++i) {
+            const Il2CppType* pType = il2cpp_method_get_param(method, i);
+            std::string pTypeName = GetIdaCompatibleType(pType);
+
+            sig += ", " + pTypeName + " p" + std::to_string(i);
+            uMethod.typeSignature += GetTypeAbbreviation(pTypeName);
+        }
+        sig += ", const MethodInfo* method);";
+        uMethod.typeSignature += "i"; // 结尾的 MethodInfo*
+
+        uMethod.signature = sig;
+        unityClass->methods.push_back(uMethod);
+    }
+}
+
+void li2cppHeader::li2cppHeader::SaveToMethodJson(const std::string& path) {
+    std::ofstream fout(path);
+    if (!fout.is_open()) return;
+
+    // 1. 在最前面加上 {"ScriptMethod": [ 结构
+    fout << "{\n";
+    fout << "  \"ScriptMethod\": [\n";
+
+    bool firstEntry = true;
+
+    for (auto const& [uniqueKey, cls] : m_classMap) {
+        for (const auto& method : cls->methods) {
+            if (!firstEntry) fout << ",\n";
+
+            fout << "    {\n";
+            fout << "      \"Address\": " << method.methodPointer << ",\n";
+            // 这里使用 cls->namespc 和 cls->className 组合成 Interop.ErrorInfo 风格
+            fout << "      \"Name\": \"" << (cls->namespc.empty() ? "" : cls->namespc + ".") << cls->className << "$$." << method.name << "\",\n";
+            fout << "      \"Signature\": \"" << method.signature << "\",\n";
+            fout << "      \"TypeSignature\": \"" << method.typeSignature << "\"\n";
+            fout << "    }";
+
+            firstEntry = false;
+        }
+    }
+
+    // 2. 闭合 JSON 结构
+    fout << "\n  ]\n";
+    fout << "}";
+
+    fout.close();
 }

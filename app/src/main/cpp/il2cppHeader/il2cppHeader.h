@@ -49,6 +49,10 @@ namespace li2cppHeader {
         uintptr_t methodPointer;
         uint32_t token;
 
+        // 新增：用于生成的字段
+        std::string signature;
+        std::string typeSignature; // 例如 "viii" (void, int, int, int)
+
         UnityMethod() : methodPointer(0), token(0) {}
 
         // 参数化构造
@@ -121,9 +125,14 @@ namespace li2cppHeader {
         std::string GetClassUniqueName( std::map<std::string, std::shared_ptr<UnityClass>>& classMap, std::shared_ptr<UnityClass>& targetClass,const Il2CppType* type);
         void DumpFields(Il2CppClass* klass, std::shared_ptr<UnityClass>& unityClass);
         std::string GetIdaCompatibleType(const Il2CppType* type);
-        std::string CleanName(Il2CppClass* klass);
+        std::string GetSafeUniqueName(Il2CppClass* klass);
         uint32_t GetTypeSize(const Il2CppType* type);
         void SaveToIdaHeader(const std::string& path);
+        std::string GetSafeGenericName(const Il2CppType* type);
+        std::string CleanIdentifier(std::string name);
+        void DumpMethods(Il2CppClass* klass, std::shared_ptr<UnityClass>& unityClass);
+        std::string GetTypeAbbreviation(const std::string& type);
+        void SaveToMethodJson(const std::string& path);
     private:
         uint64_t m_il2cppbase = 0;
         void* m_pGlobalMetadata =nullptr;
@@ -134,6 +143,7 @@ namespace li2cppHeader {
 
         // 2. 为了方便快速查找，可以再定义一个以全名为 Key 的索引
         std::map<std::string, std::shared_ptr<UnityClass>> m_classMap;
+        std::string m_packname = "com.tencent.lolm";
 
     };
 }
