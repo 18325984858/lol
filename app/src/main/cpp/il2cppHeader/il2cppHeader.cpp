@@ -544,7 +544,7 @@ void li2cppHeader::li2cppHeader::SaveToMethodJson(const std::string& path) {
             if (!firstEntry) fout << ",\n";
 
             fout << "    {\n";
-            fout << "      \"Address\": " << method.methodPointer << ",\n";
+            fout << "      \"Address\": " <<  ((method.methodPointer != 0) ? (method.methodPointer - m_il2cppbase) : 0)<< ",\n";
             // 这里使用 cls->namespc 和 cls->className 组合成 Interop.ErrorInfo 风格
             fout << "      \"Name\": \"" << (cls->namespc.empty() ? "" : cls->namespc + ".") << cls->className << "$$." << method.name << "\",\n";
             fout << "      \"Signature\": \"" << method.signature << "\",\n";
