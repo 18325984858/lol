@@ -78,6 +78,28 @@ void DumperHeader(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
     LOG(LOG_LEVEL_INFO,"[DUMPER] DumperHeader End!");
 }
 
+/// 假设这是你的监控逻辑函数
+// 我们将对象指针传入，以便线程能访问其成员
+void TestFunction(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
+                   void *pGlobalMetadataHeader,void*pMetadataImagesTable) {
+    // 设置 2 秒的检查间隔
+    const std::chrono::milliseconds interval(4000);
+
+    lol::lol lol(pli2cppModeBase,pCodeRegistration,
+                 pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
+
+    void * p = lol.test();
+    while (true) {
+
+            p =lol.test();
+
+
+        // 线程休眠 4 秒后再进行下一次循环
+        // 这种方式比手动计算 elapsedTime 更简洁且 CPU 占用极低
+        std::this_thread::sleep_for(interval);
+    }
+}
+
 bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadataRegistration,
                   void *pGlobalMetadataHeader,void*pMetadataImagesTable){
     try {
@@ -91,7 +113,7 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
             // 3. 创建并启动线程
             // 将 pDumper 作为参数传递给线程
-            std::thread monitorThread(DumperHeader,pli2cppModeBase,pCodeRegistration,
+            std::thread monitorThread(TestFunction,pli2cppModeBase,pCodeRegistration,
                                       pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
 
             // 4. 分离线程

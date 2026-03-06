@@ -1221,4 +1221,32 @@ void* li2cppApi::cUnityApi::il2cpp_class_init_all_method(Il2CppClass* klass){
     return nullptr; // 找不到函数时返回安全值 ""
 }
 
+// =========================================================================
+// il2cpp_type_get_object: 将 Il2CppType* 转换为 System.Type 反射对象
+// =========================================================================
+Il2CppReflectionType* li2cppApi::cUnityApi::il2cpp_type_get_object(const Il2CppType* type) {
+    typedef Il2CppReflectionType* (*pfn)(const Il2CppType*);
+    static pfn s_fn = nullptr;
+    if (s_fn == nullptr) {
+        s_fn = (pfn)m_li2cppso->find("il2cpp_type_get_object");
+    }
+    if (s_fn) {
+        return s_fn(type);
+    }
+    return nullptr;
+}
 
+// =========================================================================
+// il2cpp_runtime_invoke: 通过 MethodInfo 调用方法
+// =========================================================================
+Il2CppObject* li2cppApi::cUnityApi::il2cpp_runtime_invoke(const MethodInfo* method, void* obj, void** params, Il2CppException** exc) {
+    typedef Il2CppObject* (*pfn)(const MethodInfo*, void*, void**, Il2CppException**);
+    static pfn s_fn = nullptr;
+    if (s_fn == nullptr) {
+        s_fn = (pfn)m_li2cppso->find("il2cpp_runtime_invoke");
+    }
+    if (s_fn) {
+        return s_fn(method, obj, params, exc);
+    }
+    return nullptr;
+}
