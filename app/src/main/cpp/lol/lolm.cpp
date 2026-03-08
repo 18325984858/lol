@@ -6,6 +6,8 @@
 #include "../UnityApi/unityapi.h"
 #include "../Log/log.h"
 
+
+
 std::string lol::lol::decryPtthestring(char*Srcstr, uint32_t nameIndex) {
 
     LOG(LOG_LEVEL_INFO,"start nameIndex : %d Srcstr : %p Srcstrvalue : %s",nameIndex,Srcstr,Srcstr);
@@ -145,6 +147,7 @@ lol::FEVisi::~FEVisi() {
     }
 }
 
+
 bool lol::FEVisi::get_BattleStarted() {
     bool isOpening = false;
     typedef bool (*get_BattleStartedpfn)();
@@ -176,98 +179,90 @@ void *lol::FEVisi::get_battleTeamMgr() {
     return pData;
 }
 
-void *lol::FEVisi::test() {
-    static const MethodInfo* s_findObjectsOfType = nullptr;
-    static Il2CppReflectionType* s_feVisiTypeObject = nullptr;
+int32_t lol::FEVisi::get_MiniIconBaseCtrlType(void* pData) {
 
-    LOG(LOG_LEVEL_INFO, "[Test] FEVisi::test enter, cachedType=%p cachedMethod=%p", s_feVisiTypeObject, s_findObjectsOfType);
-
-    // 1) Resolve FEVisi class
-    ::Il2CppClass* pFEVisiClass = reinterpret_cast<::Il2CppClass*>(m_pfunctionInfo->FindClassByName(
-            "ilbil2cpp.so",
+    uint32_t iconTypeOffset = GetFieldOffset(
             "Assembly-CSharp.dll",
-            "FEVisi",
-            "FrameEngine.Visual.FEVisi"));
+            "UIMiniIconBaseCtrl",
+            "UIMiniIconBaseCtrl",
+            "iconType");
+    if (iconTypeOffset == INVALID_OFFSET) return -1;
 
-    if (!pFEVisiClass) {
-        LOG(LOG_LEVEL_ERROR, "[Test] FindClassByName failed: FEVisi not found");
+    return ReadMemberValue<int32_t>(pData, iconTypeOffset);
+}
+
+void *lol::FEVisi::test() {
+    LOG(LOG_LEVEL_INFO, "[MiniMap] ========== test() 开始 ==========");
+
+    // -------- Step 1: 获取 _entityCtrl 静态成员 --------
+    auto* _entityCtrl = m_pfunctionInfo->GetStaticMember(
+            "ilbil2cpp.so", "Assembly-CSharp.dll",
+            "UIMainBattleMiniMapCtrl", "UIMainBattleMiniMapCtrl",
+            "_entityCtrl");
+    if (_entityCtrl == nullptr) {
+        LOG(LOG_LEVEL_WARN, "[MiniMap] _entityCtrl 为空，跳过");
         return nullptr;
     }
+    LOG(LOG_LEVEL_INFO, "[MiniMap] Step1 _entityCtrl: %p", _entityCtrl);
 
-    // 2) Equivalent to GetType(): Il2CppClass -> Il2CppType -> System.Type
-    if (!s_feVisiTypeObject) {
-        const Il2CppType* pType = m_pfunctionInfo->il2cpp_class_get_type(pFEVisiClass);
-        if (!pType) {
-            LOG(LOG_LEVEL_ERROR, "[Test] il2cpp_class_get_type failed");
-            return nullptr;
-        }
-
-        s_feVisiTypeObject = m_pfunctionInfo->il2cpp_type_get_object(pType);
-        if (!s_feVisiTypeObject) {
-            LOG(LOG_LEVEL_ERROR, "[Test] il2cpp_type_get_object failed");
-            return nullptr;
-        }
-        LOG(LOG_LEVEL_INFO, "[Test] FEVisi System.Type object=%p", s_feVisiTypeObject);
-    } else {
-        LOG(LOG_LEVEL_INFO, "[Test] Reuse cached FEVisi System.Type object=%p", s_feVisiTypeObject);
-    }
-
-    // 3) Cache UnityEngine.Object.FindObjectsOfType(System.Type)
-    if (!s_findObjectsOfType) {
-        ::Il2CppClass* pObjectClass = reinterpret_cast<::Il2CppClass*>(m_pfunctionInfo->FindClassByName(
-                "ilbil2cpp.so",
-                "UnityEngine.CoreModule.dll",
-                "Object",
-                "UnityEngine.Object"));
-
-        if (!pObjectClass) {
-            LOG(LOG_LEVEL_ERROR, "[Test] FindClassByName failed: UnityEngine.Object not found");
-            return nullptr;
-        }
-
-        void* iter = nullptr;
-        while (const MethodInfo* pMethod = m_pfunctionInfo->il2cpp_class_get_methods(pObjectClass, &iter)) {
-            const char* methodName = m_pfunctionInfo->il2cpp_method_get_name(pMethod);
-            if (!methodName || std::string(methodName) != "FindObjectsOfType") {
-                continue;
-            }
-
-            uint32_t paramCount = m_pfunctionInfo->il2cpp_method_get_param_count(pMethod);
-            if (paramCount != 1) {
-                continue;
-            }
-
-            const Il2CppType* pArgType = m_pfunctionInfo->il2cpp_method_get_param(pMethod, 0);
-            const char* pArgTypeName = pArgType ? m_pfunctionInfo->il2cpp_type_get_name(pArgType) : nullptr;
-            if (!pArgTypeName || std::string(pArgTypeName).find("System.Type") == std::string::npos) {
-                continue;
-            }
-
-            s_findObjectsOfType = pMethod;
-            break;
-        }
-
-        if (!s_findObjectsOfType) {
-            LOG(LOG_LEVEL_ERROR, "[Test] FindObjectsOfType(System.Type) not found");
-            return nullptr;
-        }
-        LOG(LOG_LEVEL_INFO, "[Test] Cached FindObjectsOfType(System.Type) method=%p", s_findObjectsOfType);
-    } else {
-        LOG(LOG_LEVEL_INFO, "[Test] Reuse cached FindObjectsOfType method=%p", s_findObjectsOfType);
-    }
-
-    // 4) Invoke FindObjectsOfType(type)
-    void* params[1] = { s_feVisiTypeObject };
-    Il2CppException* pExc = nullptr;
-
-    LOG(LOG_LEVEL_INFO, "[Test] Invoke FindObjectsOfType method=%p typeArg=%p", s_findObjectsOfType, params[0]);
-    Il2CppObject* pResult = m_pfunctionInfo->il2cpp_runtime_invoke(s_findObjectsOfType, nullptr, params, &pExc);
-
-    if (pExc) {
-        LOG(LOG_LEVEL_ERROR, "[Test] il2cpp_runtime_invoke exception=%p", pExc);
+    // -------- Step 2: 通过偏移读取 miniMapIconCtrl --------
+    uint32_t miniMapIconCtrlOffset = GetFieldOffset(
+            "Assembly-CSharp.dll", "MiniMapEntityCtrl", "MiniMapEntityCtrl", "miniMapIconCtrl");
+    if (miniMapIconCtrlOffset == INVALID_OFFSET) {
+        LOG(LOG_LEVEL_WARN, "[MiniMap] miniMapIconCtrl 偏移查找失败");
         return nullptr;
     }
+    void* miniMapIconCtrl = ReadMemberPtr(_entityCtrl, miniMapIconCtrlOffset);
+    if (miniMapIconCtrl == nullptr) {
+        LOG(LOG_LEVEL_WARN, "[MiniMap] miniMapIconCtrl 为空 (offset: 0x%X)", miniMapIconCtrlOffset);
+        return nullptr;
+    }
+    LOG(LOG_LEVEL_INFO, "[MiniMap] Step2 miniMapIconCtrl: %p (offset: 0x%X)", miniMapIconCtrl, miniMapIconCtrlOffset);
 
-    LOG(LOG_LEVEL_INFO, "[Test] FindObjectsOfType result array: %p", pResult);
-    return pResult;
+    // -------- Step 3: 通过偏移读取 miniIcons 字典 --------
+    uint32_t miniIconsOffset = GetFieldOffset(
+            "Assembly-CSharp.dll", "UIMiniMapIconCtrl", "UIMiniMapIconCtrl", "miniIcons");
+    if (miniIconsOffset == INVALID_OFFSET) {
+        LOG(LOG_LEVEL_WARN, "[MiniMap] miniIcons 偏移查找失败");
+        return nullptr;
+    }
+    System_Collections_Generic_Dictionary_TKey_TValue_o* pMiniIconsDictionary = static_cast<System_Collections_Generic_Dictionary_TKey_TValue_o *>(ReadMemberPtr(
+            miniMapIconCtrl, miniIconsOffset));
+    if (pMiniIconsDictionary == nullptr) {
+        LOG(LOG_LEVEL_WARN, "[MiniMap] miniIcons 字典为空 (offset: 0x%X)", miniIconsOffset);
+        return nullptr;
+    }
+    LOG(LOG_LEVEL_INFO, "[MiniMap] Step3 miniIcons: %p (offset: 0x%X) (count: 0x%X)", pMiniIconsDictionary, miniIconsOffset, pMiniIconsDictionary->fields.count);
+
+    for(int i = 0; i < pMiniIconsDictionary->fields.count; i++) {
+        System_Collections_Generic_Dictionary_Entry_TKey_TValue_array * pArray = pMiniIconsDictionary->fields.entries;
+        System_Collections_Generic_Dictionary_Entry_TKey_TValue_o & pData = pArray->m_Items[i];
+
+        // Dictionary 内部实现：hashCode < 0 表示空闲槽位，跳过
+        if (pData.fields.hashCode < 0) continue;
+
+        auto* baseCtrl = pData.fields.value;
+        if (baseCtrl == nullptr) continue;
+
+        int32_t iconType = get_MiniIconBaseCtrlType(baseCtrl);
+        LOG(LOG_LEVEL_INFO, "[MiniMap] Entry[%d] iconType=%d, baseCtrl=%p", i, iconType, baseCtrl);
+
+        if ((MiniMapIconType)iconType == MiniMapIconType_EnemyTeamHero) {
+            // 读取敌方英雄关联的 actor
+            UIMiniIconBaseCtrl_o* pIconCtrl = static_cast<UIMiniIconBaseCtrl_o*>(baseCtrl);
+            auto* actor = pIconCtrl->fields.actor;
+            bool isShowing = pIconCtrl->fields.isShowing;
+
+            LOG(LOG_LEVEL_INFO, "[MiniMap] 发现敌方英雄! Entry[%d] actor=%p isShowing=%d",
+                i, actor, isShowing);
+        }
+        else if((MiniMapIconType)iconType == MiniMapIconType_MyTeamWard){
+
+
+
+        }
+    }
+
+    LOG(LOG_LEVEL_INFO, "[MiniMap] ========== test() 完成 ==========");
+    return pMiniIconsDictionary;
 }

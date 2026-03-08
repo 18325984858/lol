@@ -28,6 +28,10 @@ void RunMonitoring(void *pli2cppModeBase, void *pCodeRegistration, void *pMetada
         // --- 业务逻辑执行区 ---
         if(nFlags){
         LOG(LOG_LEVEL_INFO,"[TEST GAME] 成功进入对局 %p",lol.get_battleTeamMgr());
+
+            lol =lol.test();
+
+
         }else{
             nFlags = lol.get_BattleStarted();
         }
@@ -113,7 +117,7 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
             // 3. 创建并启动线程
             // 将 pDumper 作为参数传递给线程
-            std::thread monitorThread(TestFunction,pli2cppModeBase,pCodeRegistration,
+            std::thread monitorThread(RunMonitoring,pli2cppModeBase,pCodeRegistration,
                                       pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
 
             // 4. 分离线程
@@ -122,7 +126,15 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
             // 3. 创建并启动线程
             // 将 pDumper 作为参数传递给线程
-            //std::thread monitorThread1(Dumper,pli2cppModeBase,pCodeRegistration,
+            //std::thread monitorThread0(Dumper,pli2cppModeBase,pCodeRegistration,
+            //                          pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
+
+            // 4. 分离线程
+            //monitorThread0.detach();
+
+            // 3. 创建并启动线程
+            // 将 pDumper 作为参数传递给线程
+            //std::thread monitorThread1(DumperHeader,pli2cppModeBase,pCodeRegistration,
             //                          pMetadataRegistration,pGlobalMetadataHeader,pMetadataImagesTable);
 
             // 4. 分离线程

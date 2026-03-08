@@ -14,9 +14,6 @@
 #define DOBBY_PROJECT_LOG_H
 
 #include <android/log.h>  // 包含 Android NDK 的 log.h 文件
-
-#endif //DOBBY_PROJECT_LOG_H
-
 #include <stdarg.h>  // 用于支持可变参数宏
 
 /** @name 日志级别定义 */
@@ -55,3 +52,6 @@
 #else
 #define LOG(level, fmt, ...)  // 如果禁用日志，则宏什么都不做
 #endif
+
+
+#endif //DOBBY_PROJECT_LOG_H

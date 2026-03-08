@@ -16,165 +16,12 @@
 #include <iostream>
 #include <stdint.h>
 #include <map>
+#include "LolHeader.h"
 #include "../interface/interface.h"
 
 struct Il2CppGlobalMetadataHeader;
 
 namespace lol {
-
-    /**
-     * @brief 全局解密密钥/元数据数据表
-     * @details 来源于 .rodata:0B9BBF1B，用于字符串解密运算
-     */
-    const uint8_t byte_B9BBF1B[277] = {
-            0xF8, 0x99, 0x13, 0x9D, 0xF5, 0xE1, 0x05, 0x93, 0x96, 0x43, 0x14, 0x15, 0xE7, 0x70,
-            0xC6, 0xDD,
-            0x38, 0xB3, 0xEF, 0xF8, 0xBA, 0xF5, 0x66, 0x27, 0x47, 0x8E, 0xC7, 0x6A, 0x70, 0x4E,
-            0x9B, 0x52,
-            0xEC, 0x89, 0x56, 0x63, 0x7A, 0x99, 0x78, 0x7B, 0xD1, 0x97, 0xEA, 0xCD, 0x77, 0xAC,
-            0xCE, 0x5E,
-            0x69, 0x74, 0xCE, 0x5A, 0xC6, 0x60, 0x61, 0x0B, 0x44, 0xD9, 0xB9, 0xFE, 0xD0, 0xFF,
-            0x95, 0x48,
-            0xC9, 0xE1, 0x07, 0x4F, 0x5B, 0x3F, 0x9F, 0xC8, 0xEA, 0x15, 0xD1, 0x52, 0xAD, 0xD0,
-            0x72, 0x94,
-            0x65, 0xB9, 0xEE, 0xA6, 0xE1, 0xCC, 0x6B, 0xB9, 0xF0, 0xCD, 0x2A, 0x47, 0x75, 0x1A,
-            0x18, 0x6F,
-            0xF0, 0x93, 0x5E, 0x4C, 0xD5, 0x92, 0x0A, 0xA6, 0xC7, 0xC9, 0x96, 0xA5, 0xEE, 0x53,
-            0xA7, 0x0F,
-            0xA9, 0x7D, 0xA6, 0x29, 0xB0, 0x98, 0xB7, 0x5C, 0x29, 0x4D, 0xFF, 0xDC, 0x3E, 0x46,
-            0x39, 0x04,
-            0xA3, 0xC6, 0x5C, 0x29, 0x74, 0x27, 0x0F, 0xD0, 0x93, 0xEE, 0x8A, 0x9B, 0xF8, 0xAE,
-            0x7D, 0x0B,
-            0x27, 0x23, 0xD0, 0x92, 0xB6, 0x38, 0x85, 0xE0, 0xD7, 0xC2, 0x60, 0xCC, 0x00, 0x7E,
-            0x8B, 0x9D,
-            0x5F, 0x93, 0xF9, 0x83, 0x52, 0x4D, 0xEF, 0x3D, 0xCA, 0x46, 0x44, 0x69, 0xD2, 0xCF,
-            0x9F, 0x3E,
-            0x69, 0x8D, 0x51, 0xA1, 0x9D, 0x8A, 0x12, 0x1C, 0xE5, 0x81, 0x49, 0x9D, 0x7B, 0x70,
-            0x16, 0x68,
-            0x7F, 0x6F, 0xFA, 0xA6, 0xBB, 0x0B, 0x40, 0x80, 0x17, 0xB6, 0x22, 0x54, 0x21, 0x16,
-            0x91, 0xB5,
-            0x73, 0x27, 0x8A, 0x4A, 0x86, 0x96, 0x0E, 0xEB, 0x57, 0x6A, 0x8F, 0xD4, 0xC9, 0xEC,
-            0x69, 0x97,
-            0x5F, 0xD0, 0xB3, 0x7C, 0xD7, 0xDB, 0xBB, 0x00, 0xF9, 0x7B, 0xA6, 0xCE, 0x92, 0xBF,
-            0x5A, 0xDD,
-            0x2B, 0x44, 0x92, 0x8A, 0xE1, 0x1F, 0xB9, 0x38, 0x4C, 0x4C, 0xF3, 0x87, 0x08, 0x67,
-            0x7C, 0x48,
-            0xC4, 0x51, 0x47, 0xDE, 0xE7, 0x29, 0x31, 0x1E, 0xF5, 0xB5, 0xC3, 0x00, 0x39, 0x46,
-            0xC4, 0x8F,
-            0x00, 0x00, 0x00, 0x00, 0x00
-    };
-
-    struct Il2CppClass_1
-    {
-        void* image;
-        void* gc_desc;
-        const char* name;
-        const char* namespaze;
-        Il2CppType byval_arg;
-        Il2CppType this_arg;
-        Il2CppClass* element_class;
-        Il2CppClass* castClass;
-        Il2CppClass* declaringType;
-        Il2CppClass* parent;
-        void *generic_class;
-        void* typeMetadataHandle;
-        void* interopData;
-        Il2CppClass* klass;
-        void* fields;
-        void* events;
-        void* properties;
-        void* methods;
-        Il2CppClass** nestedTypes;
-        Il2CppClass** implementedInterfaces;
-        Il2CppRuntimeInterfaceOffsetPair* interfaceOffsets;
-    };
-
-    struct Il2CppClass_2
-    {
-        Il2CppClass** typeHierarchy;
-        void *unity_user_data;
-        uint32_t initializationExceptionGCHandle;
-        uint32_t cctor_started;
-        uint32_t cctor_finished;
-        size_t cctor_thread;
-        void* genericContainerHandle;
-        uint32_t instance_size;
-        uint32_t actualSize;
-        uint32_t element_size;
-        int32_t native_size;
-        uint32_t static_fields_size;
-        uint32_t thread_static_fields_size;
-        int32_t thread_static_fields_offset;
-        uint32_t flags;
-        uint32_t token;
-        uint16_t method_count;
-        uint16_t property_count;
-        uint16_t field_count;
-        uint16_t event_count;
-        uint16_t nested_type_count;
-        uint16_t vtable_count;
-        uint16_t interfaces_count;
-        uint16_t interface_offsets_count;
-        uint8_t typeHierarchyDepth;
-        uint8_t genericRecursionDepth;
-        uint8_t rank;
-        uint8_t minimumAlignment;
-        uint8_t naturalAligment;
-        uint8_t packingSize;
-        uint8_t bitflags1;
-        uint8_t bitflags2;
-    };
-
-    struct Il2CppClass
-    {
-        Il2CppClass_1 _1;
-        void* static_fields;
-        Il2CppRGCTXData* rgctx_data;
-        Il2CppClass_2 _2;
-        VirtualInvokeData vtable[255];
-    };
-    struct FrameEngine_Visual_FEVisi_Fields {
-    };
-    struct FrameEngine_Visual_FEVisi_VTable {
-        VirtualInvokeData _0_dummy;
-    };
-    struct FrameEngine_Visual_FEVisi_c {
-        Il2CppClass_1 _1;
-        struct FrameEngine_Visual_FEVisi_StaticFields* static_fields;
-        Il2CppRGCTXData* rgctx_data;
-        Il2CppClass_2 _2;
-        FrameEngine_Visual_FEVisi_VTable vtable;
-    };
-    struct FrameEngine_Visual_FEVisi_o {
-        FrameEngine_Visual_FEVisi_c *klass;
-        void *monitor;
-        FrameEngine_Visual_FEVisi_Fields fields;
-    };
-    struct FrameEngine_Visual_FEVisi_StaticFields {
-        uint64_t myPlayerGid;
-        struct FrameEngine_Logic_BattleTeam_o* judgeTeam;
-        struct FrameEngine_Logic_BattleTeam_o* myTeam;
-        struct FrameEngine_Logic_BattleTeam_o* neutralTeam;
-        struct FrameEngine_Logic_BattleTeam_o* enemyTeam;
-        struct FrameEngine_Logic_BattlePlayer_o* myPlayer;
-        struct FrameEngine_Visual_BattleActorVisi_o* myHero;
-        struct FrameEngine_Visual_BattleActorVisi_o* myOriginHero;
-        struct FrameEngine_Logic_BattleMonsterSpawner_o* monsterSpawner;
-        struct System_Collections_Generic_Dictionary_System_Int32_UnityEngine_Vector2_o* trigonometricCache;
-        bool CameraOptimization;
-        bool disableLogForLowest;
-        bool alwaysShowForRecorder;
-        bool ignoreCameraRotate;
-        bool keepShowSoldierHeadbar;
-        struct FrameEngine_Logic_CherryTeam_o* myCherryTeam;
-        struct FrameEngine_Logic_Battle_o* battle_k_BackingField;
-        struct FrameEngine_Logic_ActorMgr_o* ActorMgr_k_BackingField;
-        struct FrameEngine_Logic_BulletMgr_o* BulletMgr_k_BackingField;
-        struct FrameEngine_Interface_TargetUtilsBase_o* targetUtilsBase_k_BackingField;
-    };
-
-
-
     /**
      * @struct  LolStrStruct
      * @brief   加密字符串缓存结构 —— 存储解密状态和原始字符串
@@ -218,8 +65,73 @@ namespace lol {
         /** @brief 获取所有玩家的队伍管理器对象指针 */
         void* get_battleTeamMgr();
 
+        int32_t get_MiniIconBaseCtrlType(void* pData);
     public:
         void* test();
+
+        /**
+         * @brief   通过对象基地址 + 偏移读取成员值（模板版本，支持任意类型）
+         * @tparam  T       要读取的目标类型（如 int32_t, float, bool, void* 等）
+         * @param   pObject 对象基地址（Il2CppObject* 或任意运行时对象指针）
+         * @param   offset  成员在对象中的偏移（通过 GetStaticMember 的 pOutOffset 获取）
+         * @return  读取到的值，若 pObject 为空则返回 T 的默认值
+         */
+        template<typename T>
+        T ReadMemberValue(void* pObject, uint32_t offset) {
+            if (pObject == nullptr) return T{};
+            return *reinterpret_cast<T*>((uint64_t)pObject + offset);
+        }
+
+        /**
+         * @brief   查询指定类中任意成员（静态/实例）的偏移量
+         * @param   pModuleName     类所在模块名（如 "Assembly-CSharp.dll"）
+         * @param   pClassName      类名
+         * @param   pTemplateName   泛型名（可为空）
+         * @param   pFieldName      字段名
+         * @return  字段偏移，查找失败返回 INVALID_OFFSET (0xFFFFFFFF)
+         */
+        static constexpr uint32_t INVALID_OFFSET = 0xFFFFFFFF;
+        inline uint32_t GetFieldOffset(const std::string& pModuleName,
+                                       const std::string& pClassName,
+                                       const std::string& pTemplateName,
+                                       const std::string& pFieldName) {
+            if (m_pfunctionInfo == nullptr) return INVALID_OFFSET;
+            uint32_t offset = INVALID_OFFSET;
+            m_pfunctionInfo->GetMember("ilbil2cpp.so",pModuleName, pClassName, pTemplateName, pFieldName, &offset);
+            return offset;
+        }
+
+        /**
+         * @brief   通过对象基地址 + 偏移读取指针类型成员（便捷版本）
+         * @param   pObject 对象基地址
+         * @param   offset  成员在对象中的偏移
+         * @return  读取到的指针值，若 pObject 为空则返回 nullptr
+         */
+        inline void* ReadMemberPtr(void* pObject, uint32_t offset) {
+            if (pObject == nullptr) return nullptr;
+            return *reinterpret_cast<void**>((uint64_t)pObject + offset);
+        }
+
+        /**
+         * @brief   通过类名和字段名自动查找偏移并读取成员值
+         * @tparam  T               要读取的目标类型
+         * @param   pObject         对象基地址
+         * @param   pModuleName     类所在模块名（如 "Assembly-CSharp.dll"）
+         * @param   pClassName      类名
+         * @param   pTemplateName   泛型名（可为空）
+         * @param   pFieldName      字段名
+         * @return  读取到的值，查找失败或 pObject 为空则返回 T 的默认值
+         */
+        template<typename T>
+        T ReadMemberByName(void* pObject, const std::string& pModuleName,
+                           const std::string& pClassName, const std::string& pTemplateName,
+                           const std::string& pFieldName) {
+            if (pObject == nullptr || m_pfunctionInfo == nullptr) return T{};
+            uint32_t offset = 0xFFFFFFFF;
+            m_pfunctionInfo->GetStaticMember("libil2cpp.so", pModuleName, pClassName, pTemplateName, pFieldName, &offset);
+            if (offset == 0xFFFFFFFF) return T{};
+            return *reinterpret_cast<T*>((uint64_t)pObject + offset);
+        }
     private:
         std::shared_ptr<fun::function> m_pfunctionInfo; ///< 类信息查询接口实例
     };
@@ -271,6 +183,8 @@ namespace lol {
          * @return  true 表示已加密需要解密，false 表示无需处理
          */
         bool IsEncryptionOrIsDecryption(uint32_t nameIndex);
+
+
 
     private:
         void*parrayStringIndex = NULL;                                                          ///< 字符串索引数组原始指针

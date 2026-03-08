@@ -8,6 +8,8 @@
 #include <sstream>
 #include <fstream>
 #include <set>
+#include <functional>
+
 
 std::string IntToHex(uint32_t value) {
     std::stringstream ss;
@@ -202,8 +204,19 @@ void li2cppHeader::li2cppHeader::DumpFields(Il2CppClass* klass, std::shared_ptr<
     FieldInfo* field = nullptr;
 
     // 记录上一个字段的末尾位置，用于计算 Padding
-    // Il2Cpp 对象头部（klass + monitor）在 64 位下占用 0x10 (16字节)
+    // 如果有父类且不是值类型，使用父类的 instance_size 作为起始偏移
+    // 这样父类字段占据的空间不会被误标记为 padding（因为 _Fields 结构体通过继承已包含父类字段）
+    // 对象头部（klass + monitor）在 64 位下占用 0x10 (16字节)
     uint32_t currentOffset = 0x10;
+    if (!il2cpp_class_is_valuetype(klass)) {
+        Il2CppClass* parent = il2cpp_class_get_parent(klass);
+        if (parent) {
+            uint32_t parentSize = il2cpp_class_instance_size(parent);
+            if (parentSize > currentOffset) {
+                currentOffset = parentSize;
+            }
+        }
+    }
 
     while ((field = il2cpp_class_get_fields(klass, &iter))) {
         const char* fieldName = il2cpp_field_get_name(field);
@@ -212,12 +225,12 @@ void li2cppHeader::li2cppHeader::DumpFields(Il2CppClass* klass, std::shared_ptr<
         uint32_t offset = il2cpp_field_get_offset(field);
         bool isStatic = (flags & 0x0010) != 0;
 
-        // 1. 处理实例字段的 Padding
-        if (!isStatic && offset > currentOffset) {
-            uint32_t paddingSize = offset - currentOffset;
-            std::string padName = "pad_0x" + IntToHex(currentOffset);
-            unityClass->fields.emplace_back(padName, "uint8_t[" + std::to_string(paddingSize) + "]", currentOffset, false, 0);
-        }
+        // 1. 处理实例字段的 Padding（已禁用）
+        // if (!isStatic && offset > currentOffset) {
+        //     uint32_t paddingSize = offset - currentOffset;
+        //     std::string padName = "pad_" + IntToHex(currentOffset) + "[" + std::to_string(paddingSize) + "]";
+        //     unityClass->fields.emplace_back(padName, "uint8_t", currentOffset, false, 0);
+        // }
 
         // 2. 获取 IDA 兼容的类型名 (调用之前的 GetIdaTypeName)
         std::string idaTypeName = GetIdaCompatibleType(type);
@@ -536,7 +549,35 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
         return name.empty() || name == "System_Object" || name == "System_ValueType" || name == "System_Enum";
     };
 
-    for (auto const& [uniqueKey, cls] : m_classMap) {
+    // ====== 拓扑排序：确保父类结构体在子类之前输出 ======
+    // 这样 struct Child_Fields : Parent_Fields {} 才能在 IDA 中正确解析
+    std::vector<std::string> sortedKeys;
+    {
+        std::set<std::string> visited;
+        std::function<void(const std::string&)> topoVisit = [&](const std::string& key) {
+            if (visited.count(key)) return;
+            visited.insert(key);
+            auto it = m_classMap.find(key);
+            if (it == m_classMap.end()) return;
+            auto& cls = it->second;
+            // 如果有有效父类且存在于 classMap 中，先递归访问父类
+            if (!isBaseParent(cls->parentSafeName) && !cls->typeAttr.bits.isValueType) {
+                if (m_classMap.count(cls->parentSafeName)) {
+                    topoVisit(cls->parentSafeName);
+                }
+            }
+            sortedKeys.push_back(key);
+        };
+        for (auto const& [key, _] : m_classMap) {
+            topoVisit(key);
+        }
+    }
+
+    // 记录已输出的前向定义，避免重复
+    std::set<std::string> emittedForwardDecls;
+
+    for (const auto& uniqueKey : sortedKeys) {
+        auto& cls = m_classMap[uniqueKey];
         bool isValueType = cls->typeAttr.bits.isValueType;
 
         // 判断是否有静态字段
@@ -561,13 +602,18 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
 
         // --- 1. _Fields 结构体 ---
         if (hasParentInherit) {
+            // 如果父类不在 classMap 中，先输出一个空的前向定义，避免编译错误
+            if (!m_classMap.count(cls->parentSafeName) && !emittedForwardDecls.count(parentFieldsName)) {
+                fout << "struct " << parentFieldsName << " {};\n";
+                emittedForwardDecls.insert(parentFieldsName);
+            }
             fout << "struct " << uniqueKey << "_Fields : " << parentFieldsName << " {\n";
         } else {
             fout << "struct " << uniqueKey << "_Fields {\n";
         }
         for (const auto& field : cls->fields) {
             if (!field.isStatic) {
-                fout << "    " << field.typeName << " " << field.name << ";\n";
+                fout << "    " << field.typeName << " " << field.name << "; // " << IntToHex(field.offset) << "\n";
             }
         }
         fout << "};\n";
@@ -613,7 +659,7 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
             fout << "struct " << uniqueKey << "_StaticFields {\n";
             for (const auto& field : cls->fields) {
                 if (field.isStatic) {
-                    fout << "    " << field.typeName << " " << field.name << ";\n";
+                    fout << "    " << field.typeName << " " << field.name << "; // " << IntToHex(field.offset) << "\n";
                 }
             }
             fout << "};\n";

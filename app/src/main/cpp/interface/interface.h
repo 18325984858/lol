@@ -133,7 +133,20 @@ namespace fun {
         // 参数四：泛型名 例如 JoystickSkillHandler.<>c__DisplayClass6_0
         // 参数五：要查找的静态成员名称
         // 返回值：成功返回找到的值，失败返回0
-        void *GetStaticMember(std::string pMainModuleName, std::string pModuleName,std::string pClassName,std::string ptemplateName, std::string pStaticName);
+        void *GetStaticMember(std::string pMainModuleName, std::string pModuleName,std::string pClassName,std::string ptemplateName, std::string pStaticName, uint32_t* pOutOffset = nullptr);
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // 获取指定类中任意成员（不区分静态/实例）的偏移信息
+        // 参数一：模块名例如 libil2cpp.so
+        // 参数二：类所在模块名例如 Assembly-CSharp.dll
+        // 参数三：类名 例如 BattleBaseUI
+        // 参数四：泛型名 例如 BattleBaseUI（为空则不限定泛型）
+        // 参数五：要查找的成员名称
+        // 参数六：[传出] 成员在类中的偏移
+        // 参数七：[传出] 成员的 FieldInfo 指针（可为空）
+        // 参数八：[传出] 是否为静态字段（可为空）
+        // 返回值：成功返回 true，失败返回 false
+        bool GetMember(std::string pMainModuleName,std::string pModuleName, std::string pClassName, std::string pTemplateName,std::string pFieldName, uint32_t* pOutOffset= nullptr,FieldInfo** pOutFieldInfo = nullptr, bool* pOutIsStatic = nullptr);
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // 参数一：模块名例如 libil2cpp.so
