@@ -5,6 +5,8 @@
 #include "lolm.h"
 #include "../UnityApi/unityapi.h"
 #include "../Log/log.h"
+#include "LolOffset.h"
+#include <cmath>
 
 
 
@@ -191,78 +193,201 @@ int32_t lol::FEVisi::get_MiniIconBaseCtrlType(void* pData) {
     return ReadMemberValue<int32_t>(pData, iconTypeOffset);
 }
 
-void *lol::FEVisi::test() {
-    LOG(LOG_LEVEL_INFO, "[MiniMap] ========== test() 开始 ==========");
+static float DecoderFix64(uint64_t value) {
+    return (float)((int64_t)value) / 65536.0f;
+}
 
-    // -------- Step 1: 获取 _entityCtrl 静态成员 --------
+void *lol::FEVisi::test() {
+    constexpr double kFix64Scale = 65536.0;
+    struct UnityVector3 {
+        float x;
+        float y;
+        float z;
+    };
+
+    auto fix64ToDouble = [](int64_t rawValue) -> double {
+        return static_cast<double>(rawValue) / kFix64Scale;
+    };
+    auto getManagedTypeName = [](void* pObject) -> std::string {
+        if (pObject == nullptr) return "<null>";
+
+        auto* pManagedObject = reinterpret_cast<Il2CppObject*>(pObject);
+        if (pManagedObject->klass == nullptr) return "<no-klass>";
+
+        const char* pNamespace = pManagedObject->klass->_1.namespaze;
+        const char* pName = pManagedObject->klass->_1.name;
+        if (pNamespace && pNamespace[0] != '\0') {
+            return std::string(pNamespace) + "." + (pName ? pName : "<unnamed>");
+        }
+        return pName ? std::string(pName) : std::string("<unnamed>");
+    };
+    auto logFixVector = [&](const char* prefix, const FrameEngine_Common_FixVector3_Fix64_Fields& pos) {
+        LOG(LOG_LEVEL_INFO,
+            "%s raw=(%lld,%lld,%lld) approx=(%.3f,%.3f,%.3f)",
+            prefix,
+            static_cast<long long>(pos.x.rawValue),
+            static_cast<long long>(pos.y.rawValue),
+            static_cast<long long>(pos.z.rawValue),
+            fix64ToDouble(pos.x.rawValue),
+            fix64ToDouble(pos.y.rawValue),
+            fix64ToDouble(pos.z.rawValue));
+    };
+    auto logUnityVector = [&](const char* prefix, const UnityVector3& pos) {
+        LOG(LOG_LEVEL_INFO,
+            "%s xyz=(%.3f,%.3f,%.3f)",
+            prefix,
+            pos.x,
+            pos.y,
+            pos.z);
+    };
+
+    using FixGameObjectVisiGetPositionFn = UnityVector3(*)(void*);
+    using BattleActorVisiBoolFn = bool(*)(void*);
+
+    static FixGameObjectVisiGetPositionFn s_fixGameObjectVisiGetPosition = nullptr;
+    static BattleActorVisiBoolFn s_battleActorVisiIsNeutralEye = nullptr;
+    static BattleActorVisiBoolFn s_battleActorVisiIsSummonedWards = nullptr;
+
+    if (!s_fixGameObjectVisiGetPosition) {
+        s_fixGameObjectVisiGetPosition = reinterpret_cast<FixGameObjectVisiGetPositionFn>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so",
+                "Assembly-CSharp.dll",
+                "FixGameObjectVisi",
+                "FrameEngine.Visual.FixGameObjectVisi",
+                "GetPosition"));
+    }
+    if (!s_battleActorVisiIsNeutralEye) {
+        s_battleActorVisiIsNeutralEye = reinterpret_cast<BattleActorVisiBoolFn>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so",
+                "Assembly-CSharp.dll",
+                "BattleActorVisi",
+                "FrameEngine.Visual.BattleActorVisi",
+                "IsNeutralEye"));
+    }
+    if (!s_battleActorVisiIsSummonedWards) {
+        s_battleActorVisiIsSummonedWards = reinterpret_cast<BattleActorVisiBoolFn>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so",
+                "Assembly-CSharp.dll",
+                "BattleActorVisi",
+                "FrameEngine.Visual.BattleActorVisi",
+                "IsSummonedWards"));
+    }
+
+    auto tryInvokeGetPosition = [&](void* pObject,
+                                    UnityVector3& outPos) -> bool {
+        if (pObject == nullptr || s_fixGameObjectVisiGetPosition == nullptr) return false;
+        outPos = s_fixGameObjectVisiGetPosition(pObject);
+        return true;
+    };
+
     auto* _entityCtrl = m_pfunctionInfo->GetStaticMember(
             "ilbil2cpp.so", "Assembly-CSharp.dll",
             "UIMainBattleMiniMapCtrl", "UIMainBattleMiniMapCtrl",
             "_entityCtrl");
     if (_entityCtrl == nullptr) {
-        LOG(LOG_LEVEL_WARN, "[MiniMap] _entityCtrl 为空，跳过");
         return nullptr;
     }
-    LOG(LOG_LEVEL_INFO, "[MiniMap] Step1 _entityCtrl: %p", _entityCtrl);
 
-    // -------- Step 2: 通过偏移读取 miniMapIconCtrl --------
     uint32_t miniMapIconCtrlOffset = GetFieldOffset(
             "Assembly-CSharp.dll", "MiniMapEntityCtrl", "MiniMapEntityCtrl", "miniMapIconCtrl");
     if (miniMapIconCtrlOffset == INVALID_OFFSET) {
-        LOG(LOG_LEVEL_WARN, "[MiniMap] miniMapIconCtrl 偏移查找失败");
         return nullptr;
     }
     void* miniMapIconCtrl = ReadMemberPtr(_entityCtrl, miniMapIconCtrlOffset);
     if (miniMapIconCtrl == nullptr) {
-        LOG(LOG_LEVEL_WARN, "[MiniMap] miniMapIconCtrl 为空 (offset: 0x%X)", miniMapIconCtrlOffset);
         return nullptr;
     }
-    LOG(LOG_LEVEL_INFO, "[MiniMap] Step2 miniMapIconCtrl: %p (offset: 0x%X)", miniMapIconCtrl, miniMapIconCtrlOffset);
 
-    // -------- Step 3: 通过偏移读取 miniIcons 字典 --------
     uint32_t miniIconsOffset = GetFieldOffset(
             "Assembly-CSharp.dll", "UIMiniMapIconCtrl", "UIMiniMapIconCtrl", "miniIcons");
     if (miniIconsOffset == INVALID_OFFSET) {
-        LOG(LOG_LEVEL_WARN, "[MiniMap] miniIcons 偏移查找失败");
         return nullptr;
     }
-    System_Collections_Generic_Dictionary_TKey_TValue_o* pMiniIconsDictionary = static_cast<System_Collections_Generic_Dictionary_TKey_TValue_o *>(ReadMemberPtr(
+    auto* pMiniIconsDictionary = static_cast<System_Collections_Generic_Dictionary_TKey_TValue_o*>(ReadMemberPtr(
             miniMapIconCtrl, miniIconsOffset));
-    if (pMiniIconsDictionary == nullptr) {
-        LOG(LOG_LEVEL_WARN, "[MiniMap] miniIcons 字典为空 (offset: 0x%X)", miniIconsOffset);
+    if (pMiniIconsDictionary == nullptr || pMiniIconsDictionary->fields.entries == nullptr) {
         return nullptr;
     }
-    LOG(LOG_LEVEL_INFO, "[MiniMap] Step3 miniIcons: %p (offset: 0x%X) (count: 0x%X)", pMiniIconsDictionary, miniIconsOffset, pMiniIconsDictionary->fields.count);
 
-    for(int i = 0; i < pMiniIconsDictionary->fields.count; i++) {
-        System_Collections_Generic_Dictionary_Entry_TKey_TValue_array * pArray = pMiniIconsDictionary->fields.entries;
-        System_Collections_Generic_Dictionary_Entry_TKey_TValue_o & pData = pArray->m_Items[i];
+    for (int i = 0; i < pMiniIconsDictionary->fields.count; i++) {
+        auto* pArray = pMiniIconsDictionary->fields.entries;
+        auto& pData = pArray->m_Items[i];
 
-        // Dictionary 内部实现：hashCode < 0 表示空闲槽位，跳过
         if (pData.fields.hashCode < 0) continue;
 
         auto* baseCtrl = pData.fields.value;
         if (baseCtrl == nullptr) continue;
 
-        int32_t iconType = get_MiniIconBaseCtrlType(baseCtrl);
-        LOG(LOG_LEVEL_INFO, "[MiniMap] Entry[%d] iconType=%d, baseCtrl=%p", i, iconType, baseCtrl);
+        const int32_t iconType = get_MiniIconBaseCtrlType(baseCtrl);
+        auto* pIconCtrl = static_cast<UIMiniIconBaseCtrl_o*>(baseCtrl);
+        auto* actor = pIconCtrl->fields.actor;
+        auto* followObj = pIconCtrl->fields.followObj;
+        const auto& cacheFollowPos = pIconCtrl->fields.cacheFollowPos;
+        const std::string baseCtrlTypeName = getManagedTypeName(baseCtrl);
+        const std::string actorTypeName = getManagedTypeName(actor);
+
+        UnityVector3 worldPos{};
+        const bool hasWorldPos = tryInvokeGetPosition(actor, worldPos)
+                                 || tryInvokeGetPosition(followObj, worldPos);
+
+        bool isWardLike = (MiniMapIconType)iconType == MiniMapIconType_MyTeamWard;
+        if (actor != nullptr) {
+            const bool isNeutralEye = s_battleActorVisiIsNeutralEye && s_battleActorVisiIsNeutralEye(actor);
+            const bool isSummonedWards = s_battleActorVisiIsSummonedWards && s_battleActorVisiIsSummonedWards(actor);
+            isWardLike = isWardLike || isNeutralEye || isSummonedWards;
+        }
+        if (baseCtrlTypeName.find("Ward") != std::string::npos ||
+            baseCtrlTypeName.find("Eye") != std::string::npos ||
+            actorTypeName.find("Ward") != std::string::npos ||
+            actorTypeName.find("Eye") != std::string::npos) {
+            isWardLike = true;
+        }
 
         if ((MiniMapIconType)iconType == MiniMapIconType_EnemyTeamHero) {
-            // 读取敌方英雄关联的 actor
-            UIMiniIconBaseCtrl_o* pIconCtrl = static_cast<UIMiniIconBaseCtrl_o*>(baseCtrl);
-            auto* actor = pIconCtrl->fields.actor;
-            bool isShowing = pIconCtrl->fields.isShowing;
+            logFixVector("[MiniMap][EnemyHero] cacheFollowPos", cacheFollowPos);
+            if (hasWorldPos) {
+                logUnityVector("[MiniMap][EnemyHero] worldPos", worldPos);
+            }
 
-            LOG(LOG_LEVEL_INFO, "[MiniMap] 发现敌方英雄! Entry[%d] actor=%p isShowing=%d",
-                i, actor, isShowing);
+            uint32_t _actoroffset = GetFieldOffset(
+                    "Assembly-CSharp.dll", "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi", "_actor");
+            auto* pBattleActor = static_cast<FrameEngine_Logic_BattleActor_o*>(ReadMemberPtr(
+                    actor->fields, _actoroffset));
+            LOG(LOG_LEVEL_INFO,"[MiniMap][HP]_actoroffset: %d pBattleActor:%p",_actoroffset,pBattleActor);
+            if(pBattleActor) {
+                //获取属性
+
+                /*
+                uint32_t _attributeoffset = GetFieldOffset(
+                        "Assembly-CSharp.dll", "BattleActor", "FrameEngine.Logic.BattleActor", "_attribute");
+                auto* pActorComponentAttribute = static_cast<FrameEngine_Logic_ActorComponentAttribute_o*>(ReadMemberPtr(
+                        pBattleActor->fields, _attributeoffset));
+                LOG(LOG_LEVEL_INFO,"[MiniMap][HP]_attributeoffset: %d pActorComponentAttribute:%p",_attributeoffset,pActorComponentAttribute);
+                */
+
+                uint32_t _attributeoffset = GetFieldOffset(
+                        "Assembly-CSharp.dll", "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi", "_cachedAttribute");
+                auto* pActorComponentAttribute = static_cast<FrameEngine_Logic_ActorComponentAttribute_o*>(ReadMemberPtr(
+                        actor->fields, _attributeoffset));
+                LOG(LOG_LEVEL_INFO,"[MiniMap][HP]_attributeoffset: %d pActorComponentAttribute:%p",_attributeoffset,pActorComponentAttribute);
+
+                if (pActorComponentAttribute) {
+                    uint64_t value = *(uint64_t *) (
+                            pActorComponentAttribute->fields.__InstanceLongValue + 296);
+                    float d = DecoderFix64(value);
+                    LOG(LOG_LEVEL_INFO, "[MiniMap][HP]敌方血量信息: %f", d);
+                }
+            }
+            continue;
         }
-        else if((MiniMapIconType)iconType == MiniMapIconType_MyTeamWard){
 
-
-
+        if (isWardLike) {
+            logFixVector("[MiniMap][WardLike] cacheFollowPos", cacheFollowPos);
+            if (hasWorldPos) {
+                logUnityVector("[MiniMap][WardLike] worldPos", worldPos);
+            }
         }
     }
 
-    LOG(LOG_LEVEL_INFO, "[MiniMap] ========== test() 完成 ==========");
     return pMiniIconsDictionary;
 }

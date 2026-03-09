@@ -211,6 +211,236 @@ namespace lol{
         uint8_t bitflags;
     };
 
+    struct FrameEngine_Logic_FixGameObject_Fields {
+        void* Instance; // 0x10
+        int64_t InstanceLongValue; // 0x18
+        struct FrameEngine_Logic_FixTransform_o* transform; // 0x20
+    };
+    struct FrameEngine_Logic_FixGameObject_VTable {
+        VirtualInvokeData _0_dummy;
+    };
+    struct FrameEngine_Logic_FixGameObject_c {
+        Il2CppClass_1 _1;
+        struct FrameEngine_Logic_FixGameObject_StaticFields* static_fields;
+        Il2CppRGCTXData* rgctx_data;
+        Il2CppClass_2 _2;
+        FrameEngine_Logic_FixGameObject_VTable vtable;
+    };
+    struct FrameEngine_Logic_FixGameObject_o {
+        FrameEngine_Logic_FixGameObject_c *klass;
+        void *monitor;
+        FrameEngine_Logic_FixGameObject_Fields fields;
+    };
+    struct FrameEngine_Logic_BattleActor_Fields : FrameEngine_Logic_FixGameObject_Fields {
+        struct FrameEngine_Logic_ActorComponentFightStateMgr_o* fightStateMgr; // 0x28
+        struct FrameEngine_Logic_ActorVarMgr_o* varMgr; // 0x30
+        struct FrameEngine_Logic_ActorLgcRenderer_o* renderer; // 0x38
+        struct FrameEngine_Logic_ActorCollisionBoxMgr_o* collisionBoxMgr; // 0x40
+        struct FrameEngine_Logic_ActorComponentHatred_o* hatred; // 0x48
+        struct FrameEngine_Logic_ActorComponentHurtDelay_o* hurtDelay; // 0x50
+        struct FrameEngine_Logic_ActorComponentTrait_o* traitComp; // 0x58
+        struct FrameEngine_Logic_ActorComponentRide_o* rideComp; // 0x60
+        struct FrameEngine_Logic_ActorComponentAttackStateMgr_o* attackStateMgr; // 0x68
+        struct FrameEngine_Logic_ActorComponentMovement_o* movement; // 0x70
+        struct FrameEngine_Logic_BattleTeam_o* team; // 0x78
+        struct FrameEngine_Logic_BattlePlayer_o* player; // 0x80
+        struct FrameEngine_Logic_MonsterAnchor_o* anchor; // 0x88
+        struct FrameEngine_Logic_ActorComponentAttribute_o* attribute; // 0x90
+        struct FrameEngine_Logic_ActorComponentFSM_o* fsm; // 0x98
+        struct FrameEngine_Logic_ActorComponentSkillMgr_o* skillMgr; // 0xA0
+        struct FrameEngine_Logic_ActorComponentBuffMgr_o* buffMgr; // 0xA8
+        struct FrameEngine_Logic_ActorComponentFlowMgr_o* flowMgr; // 0xB0
+        struct FrameEngine_Logic_ActorComponentBehavior_o* behavior; // 0xB8
+        struct FrameEngine_Logic_ActorComponentSummmon_o* summonMgr; // 0xC0
+        struct FrameEngine_Logic_ActorComponentLife_o* lifeComponent; // 0xC8
+        struct FrameEngine_Logic_ActorComponentVisible_o* visibleMgr; // 0xD0
+        struct FrameEngine_Logic_ActorComponentGrowth_o* growth; // 0xD8
+        struct FrameEngine_Logic_ActorComponentAuxiliary_o* auxComponent; // 0xE0
+        struct FrameEngine_Logic_ActorComponentFow_o* fow; // 0xE8
+        struct FrameEngine_Logic_ActorComponentMarkHero_o* markHeroComponent; // 0xF0
+        struct FrameEngine_Logic_ActorComponentSkillHurtStrengthen_o* skillHurtStrengthen; // 0xF8
+        struct FrameEngine_Logic_ActorWayPointsMgrLgc_o* wayPointsMgr; // 0x100
+        struct FrameEngine_Logic_BattleActor_o* host; // 0x108
+        struct FrameEngine_Logic_SubBattle_o* subBattle; // 0x110
+        struct FrameEngine_Logic_ActorComponentRealm_o* realmComponent; // 0x118
+        bool isBuilding; // 0x120
+        bool isHomeBase; // 0x121
+        bool isSpring; // 0x122
+        bool isTower; // 0x123
+        bool isTurret; // 0x124
+        bool isBarracks; // 0x125
+        bool isInhibitor; // 0x126
+        bool isHero; // 0x127
+        bool isTeleportable; // 0x128
+        bool isSoldier; // 0x129
+        bool isSmallDragon; // 0x12A
+        bool isMonster; // 0x12B
+        bool isBigDragon; // 0x12C
+        bool isHexBaron; // 0x12D
+        bool isRiftScuttler; // 0x12E
+        bool isRiftHerald; // 0x12F
+        bool isSummonRiftHerald; // 0x130
+        bool isSummonAnnieBear; // 0x131
+        bool isLargeMonster; // 0x132
+        bool isMonsterNormal; // 0x133
+        bool isMonsterEpic; // 0x134
+        bool isScuttlerZone; // 0x135
+        bool isCampVisionMonster; // 0x136
+        bool isSummoned; // 0x137
+        bool isSummonedNum; // 0x138
+        bool isSummonedClone; // 0x139
+        bool isNeutralEye; // 0x13A
+        bool isSummonedPsychic; // 0x13B
+        bool isSummonedBattle; // 0x13C
+        bool isSummonedOther; // 0x13D
+        bool isBlock; // 0x13E
+        bool isSmallMonster; // 0x13F
+        bool isSummonedWards; // 0x140
+        bool isMelee; // 0x141
+        bool isHoneyTree; // 0x142
+        bool isRedBlueBuff; // 0x143
+        bool isBlastCone; // 0x144
+        bool isCryerBloom; // 0x145
+        bool isIceFruit; // 0x146
+        bool isPet; // 0x147
+        bool isTowerFire; // 0x148
+        bool isHexGate; // 0x149
+        bool isHexToolBox; // 0x14A
+        bool isHexCannon; // 0x14B
+        bool isSummonHexCannon; // 0x14C
+        bool isHexRex; // 0x14D
+        bool isHexPoro; // 0x14E
+        bool isRexMecha; // 0x14F
+        bool isSuperSoilder; // 0x150
+        bool isGunnerSoilder; // 0x151
+        bool isBarracksSummon; // 0x152
+        bool isQuickCrystal; // 0x153
+        bool isQuickWall; // 0x154
+        uint32_t cacheObjId; // 0x158
+        bool isYordleHerald; // 0x15C
+        bool isSummonYordleHerald; // 0x15D
+        bool isTransportGate; // 0x15E
+        bool isYordleGate; // 0x15F
+        bool isYordlePig; // 0x160
+        bool isSummonYordlePig; // 0x161
+        bool isGem; // 0x162
+        bool isSeniorGem; // 0x163
+        bool isSummonIoniaHerald; // 0x164
+        struct FrameEngine_Interface_BattleActor_DC_o* DC; // 0x168
+        struct FrameEngine_Visual_BattleActorVisi_o* actorVisi; // 0x170
+    };
+    struct FrameEngine_Logic_BattleActor_VTable {
+        VirtualInvokeData _0_dummy;
+    };
+    struct FrameEngine_Logic_BattleActor_c {
+        Il2CppClass_1 _1;
+        struct FrameEngine_Logic_BattleActor_StaticFields* static_fields;
+        Il2CppRGCTXData* rgctx_data;
+        Il2CppClass_2 _2;
+        FrameEngine_Logic_BattleActor_VTable vtable;
+    };
+    struct FrameEngine_Logic_BattleActor_o {
+        FrameEngine_Logic_BattleActor_c *klass;
+        void *monitor;
+        void *fields;
+    };
+    struct FrameEngine_Logic_BattleActor_StaticFields {
+        int32_t TypeID; // 0x0
+        struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x0
+    };
+
+    struct FrameEngine_Visual_FixGameObjectVisi_Fields {
+        struct IFixGameObject_o* fixGameObject; // 0x10
+        struct FixMonoAgent_o* monoAgent; // 0x18
+    };
+    struct FrameEngine_Visual_BattleActorVisi_Fields : FrameEngine_Visual_FixGameObjectVisi_Fields {
+        bool bActive; // 0x20
+        bool hpBarShowWhenBorn; // 0x21
+        bool hpBarShowState; // 0x22
+        bool showCollide; // 0x23
+        int32_t emptyActorUsage; // 0x24
+        bool alwaysVisiableForMyCamp; // 0x28
+        bool isPlantSeed; // 0x29
+        struct ActorComponentAnimation_o* animation; // 0x30
+        struct ActorComponentRender_o* render; // 0x38
+        struct ActorComponentVisibleByCamera_o* visibleByCamera; // 0x40
+        struct ActorComponentWarnMgr_o* warnMgr; // 0x48
+        struct ActorComponentVisiMove_o* visiMove; // 0x50
+        struct ActorComponentVisiAudio_o* visiAudio; // 0x58
+        struct FrameEngine_Visual_SafeRefVisi_FrameEngine_Visual_BattleActorVisi_o* hatredActor; // 0x60
+        struct System_String_o* replaceHeroHeadIconPath; // 0x70
+        int32_t actorTransformSyncState; // 0x78
+        int32_t lastTransformSyncState; // 0x7C
+        struct System_String_o* modelPrefabPath; // 0x80
+        bool isEmptyModel; // 0x88
+        struct FrameEngine_Interface_BattleActor_DC_o* dc; // 0x90
+        struct FrameEngine_Logic_BattleActor_o* actor; // 0x98
+        int32_t petId; // 0xA0
+        uint32_t replaceModelSrcObjId; // 0xA4
+        bool LiteFowCut_Disappear; // 0xA8
+        bool ChangeModelHideVfx; // 0xA9
+        uint64_t tickFrameCount; // 0xB0
+        int32_t profilerIndex; // 0xB8
+        float stopDelayTime; // 0xBC
+        struct FrameEngineVisi_Common_ChampionResObject_o* visiResHero; // 0xC0
+        struct FrameEngineVisi_Common_MonsterResObject_o* visiResMonster; // 0xC8
+        bool isSetSpringBone; // 0xD0
+        int32_t smoothType; // 0xD4
+        struct ActorComponentEdgeCDRecord_o* edgeCDRecord; // 0xD8
+        struct System_Collections_Generic_List_FrameEngine_Visual_IMonoUpdate_o* updateList; // 0xE0
+        struct ActorTransformSync_o* actorTransformSync; // 0xE8
+        struct System_Collections_Generic_List_System_Collections_Generic_KeyValuePair_System_Int32_TransformSyncBase_o* syncList; // 0xF0
+        struct ActorSmoothSync_o* smoothSync; // 0xF8
+        struct FrameEngine_Logic_FixTransform_o* logicTransform; // 0x100
+        bool needSync; // 0x108
+        bool needSmooth; // 0x109
+        bool shouldBeVisible; // 0x10A
+        bool needVisiCut; // 0x10B
+        struct CameraController_o* cameraControllerInstance; // 0x110
+        int32_t lastVisibleFrameSeq; // 0x118
+        struct ActorChangeModelMgr_o* changeModelMgr; // 0x120
+        struct ActorAttachToModelMgr_o* attachToModelMgr; // 0x128
+        struct ActorModelTransformMgr_o* modelTransformMgr; // 0x130
+        struct FrameEngine_Logic_ActorComponentAttribute_o* cachedAttribute; // 0x138
+        float vfxScaleParam; // 0x140
+        int32_t camp; // 0x144
+        uint64_t roleId; // 0x148
+        int32_t resId; // 0x150
+        int32_t skinID; // 0x154
+        uint32_t ownerObjId; // 0x158
+        bool isPreload; // 0x15C
+        bool PauseAni; // 0x15D
+        bool bBegin; // 0x15E
+    };
+    struct FrameEngine_Visual_BattleActorVisi_VTable {
+        VirtualInvokeData _0_dummy;
+    };
+    struct FrameEngine_Visual_BattleActorVisi_c {
+        Il2CppClass_1 _1;
+        struct FrameEngine_Visual_BattleActorVisi_StaticFields* static_fields;
+        Il2CppRGCTXData* rgctx_data;
+        Il2CppClass_2 _2;
+        FrameEngine_Visual_BattleActorVisi_VTable vtable;
+    };
+    struct FrameEngine_Visual_BattleActorVisi_o {
+        FrameEngine_Visual_BattleActorVisi_c *klass;
+        void *monitor;
+        void *fields;
+    };
+    struct FrameEngine_Visual_BattleActorVisi_StaticFields {
+        bool isCutDownWarnMgrLogic; // 0x0
+        bool useNewSmoothSync; // 0x1
+        bool useMoveStartSync; // 0x2
+        bool useActorUpdateSync; // 0x3
+        bool useSelfSmooth; // 0x4
+        bool useSimpleSmooth; // 0x5
+        int32_t visibleKeepFrameCount; // 0x8
+        bool cutDownMonoUpdate; // 0xC
+        bool cutDownEmptyActorUpdate; // 0xD
+        bool notInCameraCutDownUpdateEnable; // 0xE
+        struct System_Int32_array* cacheSkillLevels; // 0x10
+    };
+
     struct FrameEngine_Visual_FEVisi_Fields {
     };
     struct FrameEngine_Visual_FEVisi_VTable {
@@ -599,8 +829,77 @@ namespace lol{
         struct System_String_o* teleportSourceEffectPath; // 0x0
         struct System_String_o* teleportCDEffectPath; // 0x0
     };
+    struct FrameEngine_Logic_FixComponent_Fields {
+        void* Instance; // 0x10
+        int64_t __InstanceLongValue; // 0x18
+    };
+    struct FrameEngine_Logic_FixComponent_VTable {
+        VirtualInvokeData _0_dummy;
+    };
+    struct FrameEngine_Logic_FixComponent_c {
+        Il2CppClass_1 _1;
+        struct FrameEngine_Logic_FixComponent_StaticFields* static_fields;
+        Il2CppRGCTXData* rgctx_data;
+        Il2CppClass_2 _2;
+        FrameEngine_Logic_FixComponent_VTable vtable;
+    };
+    struct FrameEngine_Logic_FixComponent_o {
+        FrameEngine_Logic_FixComponent_c *klass;
+        void *monitor;
+        FrameEngine_Logic_FixComponent_Fields fields;
+    };
+    struct FrameEngine_Logic_FixComponent_StaticFields {
+        int32_t TypeID; // 0x0
+        struct System_Collections_Generic_Dictionary_System_Int64_System_Object_o* NativeMap; // 0x0
+        struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x8
+    };
+    struct FrameEngine_Logic_ActorComponent_Fields : FrameEngine_Logic_FixComponent_Fields {
+        struct FrameEngine_Logic_BattleActor_o* actor; // 0x20
+    };
+    struct FrameEngine_Logic_ActorComponent_VTable {
+        VirtualInvokeData _0_dummy;
+    };
+    struct FrameEngine_Logic_ActorComponent_c {
+        Il2CppClass_1 _1;
+        struct FrameEngine_Logic_ActorComponent_StaticFields* static_fields;
+        Il2CppRGCTXData* rgctx_data;
+        Il2CppClass_2 _2;
+        FrameEngine_Logic_ActorComponent_VTable vtable;
+    };
+    struct FrameEngine_Logic_ActorComponent_o {
+        FrameEngine_Logic_ActorComponent_c *klass;
+        void *monitor;
+        FrameEngine_Logic_ActorComponent_Fields fields;
+    };
+    struct FrameEngine_Logic_ActorComponent_StaticFields {
+        int32_t TypeID; // 0x0
+        struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x0
+    };
 
-
+    struct FrameEngine_Logic_ActorComponentAttribute_Fields : FrameEngine_Logic_ActorComponent_Fields {
+        struct FrameEngine_Logic_ActorAbilityMgr_o* abilityMgr; // 0x28
+        struct FrameEngine_Logic_AttrData_o* attrDB; // 0x30
+        struct FrameEngine_Logic_DamageFixMgr_o* damageFixMgr; // 0x38
+    };
+    struct FrameEngine_Logic_ActorComponentAttribute_VTable {
+        VirtualInvokeData _0_dummy;
+    };
+    struct FrameEngine_Logic_ActorComponentAttribute_c {
+        Il2CppClass_1 _1;
+        struct FrameEngine_Logic_ActorComponentAttribute_StaticFields* static_fields;
+        Il2CppRGCTXData* rgctx_data;
+        Il2CppClass_2 _2;
+        FrameEngine_Logic_ActorComponentAttribute_VTable vtable;
+    };
+    struct FrameEngine_Logic_ActorComponentAttribute_o {
+        FrameEngine_Logic_ActorComponentAttribute_c *klass;
+        void *monitor;
+        FrameEngine_Logic_ActorComponentAttribute_Fields fields;
+    };
+    struct FrameEngine_Logic_ActorComponentAttribute_StaticFields {
+        int32_t TypeID; // 0x0
+        struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x0
+    };
 
 };
 

@@ -67,6 +67,7 @@ namespace lol {
 
         int32_t get_MiniIconBaseCtrlType(void* pData);
     public:
+
         void* test();
 
         /**
