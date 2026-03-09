@@ -133,7 +133,7 @@ namespace fun {
         // 参数四：泛型名 例如 JoystickSkillHandler.<>c__DisplayClass6_0
         // 参数五：要查找的静态成员名称
         // 返回值：成功返回找到的值，失败返回0
-        void *GetStaticMember(std::string pMainModuleName, std::string pModuleName,std::string pClassName,std::string ptemplateName, std::string pStaticName, uint32_t* pOutOffset = nullptr);
+        uint64_t GetStaticMember(std::string pMainModuleName, std::string pModuleName,std::string pClassName,std::string ptemplateName, std::string pStaticName, uint32_t* pOutOffset = nullptr);
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // 获取指定类中任意成员（不区分静态/实例）的偏移信息
@@ -156,7 +156,7 @@ namespace fun {
         // 参数五：要查找成员方法名称
         // 参数六：要查找成员方法的泛型名
         // 返回值：成功返回找到的值，失败返回0
-        void* GetMethodFun(std::string pMainModuleName, std::string pModuleName,std::string pClassName, std::string ptemplateName,std::string pMethodName,std::string pMethodtemplateName = "");
+        uint64_t GetMethodFun(std::string pMainModuleName, std::string pModuleName,std::string pClassName, std::string ptemplateName,std::string pMethodName,std::string pMethodtemplateName = "");
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         /**

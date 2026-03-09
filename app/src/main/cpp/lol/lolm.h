@@ -66,6 +66,10 @@ namespace lol {
         void* get_battleTeamMgr();
 
         int32_t get_MiniIconBaseCtrlType(void* pData);
+
+    public:
+        float DecoderFix64(uint64_t value);
+
     public:
 
         void* test();

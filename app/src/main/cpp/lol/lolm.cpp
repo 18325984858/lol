@@ -183,18 +183,30 @@ void *lol::FEVisi::get_battleTeamMgr() {
 
 int32_t lol::FEVisi::get_MiniIconBaseCtrlType(void* pData) {
 
-    uint32_t iconTypeOffset = GetFieldOffset(
-            "Assembly-CSharp.dll",
-            "UIMiniIconBaseCtrl",
-            "UIMiniIconBaseCtrl",
-            "iconType");
+    static uint32_t iconTypeOffset = INVALID_OFFSET;
+    if(iconTypeOffset == INVALID_OFFSET) {
+            iconTypeOffset = GetFieldOffset(
+                "Assembly-CSharp.dll",
+                "UIMiniIconBaseCtrl",
+                "UIMiniIconBaseCtrl",
+                "iconType");
+    }
     if (iconTypeOffset == INVALID_OFFSET) return -1;
-
     return ReadMemberValue<int32_t>(pData, iconTypeOffset);
 }
 
-static float DecoderFix64(uint64_t value) {
-    return (float)((int64_t)value) / 65536.0f;
+float lol::FEVisi::DecoderFix64(uint64_t value) {
+
+    static float divideOfOne = INVALID_OFFSET;
+
+    if(divideOfOne == INVALID_OFFSET) {
+        divideOfOne = m_pfunctionInfo->GetStaticMember(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "Fix64", "FrameEngine.Common.Fix64",
+                "divideOfOne");
+    }
+    if (divideOfOne == INVALID_OFFSET) return -1;
+    return (float)value * divideOfOne;
 }
 
 void *lol::FEVisi::test() {
@@ -280,7 +292,7 @@ void *lol::FEVisi::test() {
         return true;
     };
 
-    auto* _entityCtrl = m_pfunctionInfo->GetStaticMember(
+    auto* _entityCtrl = (void*)m_pfunctionInfo->GetStaticMember(
             "ilbil2cpp.so", "Assembly-CSharp.dll",
             "UIMainBattleMiniMapCtrl", "UIMainBattleMiniMapCtrl",
             "_entityCtrl");
@@ -320,7 +332,19 @@ void *lol::FEVisi::test() {
 
         const int32_t iconType = get_MiniIconBaseCtrlType(baseCtrl);
         auto* pIconCtrl = static_cast<UIMiniIconBaseCtrl_o*>(baseCtrl);
-        auto* actor = pIconCtrl->fields.actor;
+
+        typedef FrameEngine_Visual_BattleActorVisi_o* (*pBattleActorVisi_get_actor)(UIMiniIconBaseCtrl_o*_pthis);
+        pBattleActorVisi_get_actor BattleActorVisi_get_actor = nullptr;
+        if(BattleActorVisi_get_actor == nullptr) {
+            BattleActorVisi_get_actor = (pBattleActorVisi_get_actor) m_pfunctionInfo->GetMethodFun(
+                    "ilbil2cpp.so",
+                    "Assembly-CSharp.dll",
+                    "UIMiniIconBaseCtrl",
+                    "UIMiniIconBaseCtrl",
+                    "get_actor");
+        }
+
+        auto* actor = BattleActorVisi_get_actor(pIconCtrl);
         auto* followObj = pIconCtrl->fields.followObj;
         const auto& cacheFollowPos = pIconCtrl->fields.cacheFollowPos;
         const std::string baseCtrlTypeName = getManagedTypeName(baseCtrl);
@@ -349,27 +373,34 @@ void *lol::FEVisi::test() {
                 logUnityVector("[MiniMap][EnemyHero] worldPos", worldPos);
             }
 
-            uint32_t _actoroffset = GetFieldOffset(
-                    "Assembly-CSharp.dll", "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi", "_actor");
-            auto* pBattleActor = static_cast<FrameEngine_Logic_BattleActor_o*>(ReadMemberPtr(
-                    actor->fields, _actoroffset));
-            LOG(LOG_LEVEL_INFO,"[MiniMap][HP]_actoroffset: %d pBattleActor:%p",_actoroffset,pBattleActor);
-            if(pBattleActor) {
-                //获取属性
 
-                /*
-                uint32_t _attributeoffset = GetFieldOffset(
-                        "Assembly-CSharp.dll", "BattleActor", "FrameEngine.Logic.BattleActor", "_attribute");
-                auto* pActorComponentAttribute = static_cast<FrameEngine_Logic_ActorComponentAttribute_o*>(ReadMemberPtr(
-                        pBattleActor->fields, _attributeoffset));
-                LOG(LOG_LEVEL_INFO,"[MiniMap][HP]_attributeoffset: %d pActorComponentAttribute:%p",_attributeoffset,pActorComponentAttribute);
-                */
+            typedef FrameEngine_Logic_BattleActor_o* (*pBattleActor_get_actor)(FrameEngine_Visual_BattleActorVisi_o*_pthis);
+            static pBattleActor_get_actor BattleActor_get_actor = nullptr;
+            if(BattleActor_get_actor == nullptr) {
+                BattleActor_get_actor = (pBattleActor_get_actor) m_pfunctionInfo->GetMethodFun(
+                        "ilbil2cpp.so",
+                        "Assembly-CSharp.dll",
+                        "BattleActorVisi",
+                        "FrameEngine.Visual.BattleActorVisi",
+                        "get_actor");
+            }
+            LOG(LOG_LEVEL_INFO,"[MiniMap][HP]BattleActor_get_actor: %p ",BattleActor_get_actor);
+            auto pBattleActoractor = BattleActor_get_actor(actor);
 
-                uint32_t _attributeoffset = GetFieldOffset(
-                        "Assembly-CSharp.dll", "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi", "_cachedAttribute");
-                auto* pActorComponentAttribute = static_cast<FrameEngine_Logic_ActorComponentAttribute_o*>(ReadMemberPtr(
-                        actor->fields, _attributeoffset));
-                LOG(LOG_LEVEL_INFO,"[MiniMap][HP]_attributeoffset: %d pActorComponentAttribute:%p",_attributeoffset,pActorComponentAttribute);
+            typedef FrameEngine_Logic_ActorComponentAttribute_o* (*pActorComponentAttribute_get_attribute)(FrameEngine_Logic_BattleActor_o*_pthis);
+            static pActorComponentAttribute_get_attribute ActorComponentAttribute_get_attribute = nullptr;
+            if(ActorComponentAttribute_get_attribute == nullptr) {
+                ActorComponentAttribute_get_attribute = (pActorComponentAttribute_get_attribute) m_pfunctionInfo->GetMethodFun(
+                        "ilbil2cpp.so",
+                        "Assembly-CSharp.dll",
+                        "BattleActor",
+                        "FrameEngine.Logic.BattleActor",
+                        "get_attribute");
+            }
+            LOG(LOG_LEVEL_INFO,"[MiniMap][HP]ActorComponentAttribute_get_attribute: %p ",ActorComponentAttribute_get_attribute);
+            auto pActorComponentAttribute = ActorComponentAttribute_get_attribute(pBattleActoractor);
+
+            LOG(LOG_LEVEL_INFO,"[MiniMap][HP]pBattleActoractor: %p pActorComponentAttribute:%p",pBattleActoractor,pActorComponentAttribute);
 
                 if (pActorComponentAttribute) {
                     uint64_t value = *(uint64_t *) (
@@ -377,7 +408,7 @@ void *lol::FEVisi::test() {
                     float d = DecoderFix64(value);
                     LOG(LOG_LEVEL_INFO, "[MiniMap][HP]敌方血量信息: %f", d);
                 }
-            }
+
             continue;
         }
 
