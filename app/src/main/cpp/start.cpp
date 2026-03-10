@@ -29,7 +29,7 @@ void RunMonitoring(void *pli2cppModeBase, void *pCodeRegistration, void *pMetada
         if(nFlags){
         LOG(LOG_LEVEL_INFO,"[TEST GAME] 成功进入对局 %p",lol.get_battleTeamMgr());
 
-            lol =lol.test1();
+            lol =lol.test();
 
 
         }else{

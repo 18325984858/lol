@@ -39,6 +39,7 @@ option(DOBBY_BUILD_TEST "Build test" OFF)
 #SET_OPTION(Plugin.LinkerLoadCallback OFF)
 
 add_subdirectory(Dobby)
+add_subdirectory(AndroidSurfaceImgui)
 
 
 ######################################################################################################
@@ -105,8 +106,15 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
 target_link_libraries(${CMAKE_PROJECT_NAME}
         # List libraries link to the target library
         dobby_static
+        AImGui
         android
         log
         ${log-lib}
         ${dl-lib}
 )
+
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+        AndroidSurfaceImgui/includes
+        AndroidSurfaceImgui/third_party
+)
+

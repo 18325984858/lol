@@ -268,6 +268,8 @@ void *lol::FEVisi::test1(){
     // RVA: 0x08E479E4 Spec: DataShellList<CherryTeam...>.get_Count
     // RVA: 0x08E478EC Spec: DataShellList<CherryTeam...>.get_Item
 
+
+
     typedef int32_t (*pDataShellList_get_Count)(void*);
     static pDataShellList_get_Count DataShellList_get_Count = nullptr;
     if(DataShellList_get_Count == nullptr) {
@@ -279,13 +281,23 @@ void *lol::FEVisi::test1(){
     int32_t size = DataShellList_get_Count(pTeamList);
     LOG(LOG_LEVEL_INFO, "[Test1]Team List Size: %d", size);
 
+
+    typedef void* (*pDataShellList_get_Item)(void*,int);
+    static pDataShellList_get_Item DataShellList_get_Item = nullptr;
+    if(DataShellList_get_Item == nullptr) {
+        DataShellList_get_Item = (pDataShellList_get_Item) m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll", "DataShellList`4", "FrameEngine.DataShellList<T1,T2,T3,T4>", "get_Item");
+    }
+    LOG(LOG_LEVEL_INFO, "[Test1]DataShellList_get_Item: %p", DataShellList_get_Item);
+
+
     for (int i = 0; i < size; i++) {
-        void* pCherryTeam = List_get_Item(pTeamList, i);
+        void* pCherryTeam = DataShellList_get_Item(pTeamList, i);
         if (!pCherryTeam) continue;
 
         // 6. Match Camp & HP using hardcoded offsets
-        // CherryTeam.get_camp RVA: 0x7ddfd5c
-        // CherryTeam.get_curHp RVA: 0x7ddfd48
+        // get_camp RVA: 0x7ddfd5c
+        // get_curHp RVA: 0x7ddfd48
 
         typedef int32_t (*pCherryTeam_get_camp)(void*);
         static pCherryTeam_get_camp CherryTeam_get_camp = nullptr;
@@ -523,8 +535,8 @@ void *lol::FEVisi::test() {
             LOG(LOG_LEVEL_INFO,"[MiniMap][HP]pBattleActoractor: %p pActorComponentAttribute:%p",pBattleActoractor,pActorComponentAttribute);
 
                 if (pActorComponentAttribute) {
-                    unsigned int value = *(unsigned int *) (
-                            pActorComponentAttribute->fields.__InstanceLongValue + 0x1C);
+                    uint64_t value = *(uint64_t *) (
+                            pActorComponentAttribute->fields.__InstanceLongValue + 0x138);
                     float d = DecoderFix64(value);
                     LOG(LOG_LEVEL_INFO, "[MiniMap][HP]敌方血量信息: %f", d);
                 }
