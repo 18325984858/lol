@@ -900,7 +900,61 @@ namespace lol{
         int32_t TypeID; // 0x0
         struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x0
     };
-
+    struct FrameEngine_Logic_Battle_Fields {
+        void* Instance; // 0x10
+        int64_t InstanceLongValue; // 0x18
+        struct FrameEngine_Logic_BattleTeamMgr_o* battleTeamMgr; // 0x20
+        struct FrameEngine_Logic_BattleTeam_o* neutralTeam; // 0x28
+        struct FrameEngine_Logic_BattleTeam_o* redTeam; // 0x30
+        struct FrameEngine_Logic_BattleTeam_o* blueTeam; // 0x38
+        struct FrameEngine_Logic_BattleTeam_o* judgeTeam; // 0x40
+        struct FrameEngine_Logic_BattleMapMgr_o* mapMgr; // 0x48
+        struct FrameEngine_Logic_VisiBattleMapMgr_o* visiMapMgr; // 0x50
+        struct FrameEngine_Logic_BattleLevel_o* level; // 0x58
+        struct FrameEngine_Logic_BattleLevelRule_o* levelRule; // 0x60
+        struct FrameEngine_Logic_BattleStateMgr_o* stateMgr; // 0x68
+        struct FrameEngine_Logic_ActorMgr_o* actorMgr; // 0x70
+        struct FrameEngine_Logic_BulletMgr_o* bulletMgr; // 0x78
+        struct FrameEngine_Logic_BattleEquipMgr_o* equipmentMgr; // 0x80
+        struct FrameEngine_Logic_SurrenderMgr_o* surrenderMgr; // 0x88
+        struct FrameEngine_Logic_HangUpMgr_o* hangUpMgr; // 0x90
+        struct FrameEngine_Logic_RemakeMgr_o* remakeMgr; // 0x98
+        struct FrameEngine_Logic_VoteMgr_o* voteMgr; // 0xA0
+        struct FrameEngine_Logic_BattleGlobalVariable_o* globalVariable; // 0xA8
+        struct FrameEngine_Logic_BattleScoringManager_o* scoringMgr; // 0xB0
+        struct FrameEngine_Logic_BattleCountdownMgr_o* countdownMgr; // 0xB8
+        struct FrameEngine_Logic_ActorBuffMgr_o* buffMgr; // 0xC0
+        struct FixTime_o* fixTime; // 0xC8
+        struct FrameEngine_Logic_BattleFow_o* battleFow; // 0xD0
+        struct FrameEngine_Logic_GamePlayComponentMgr_o* gamePlayComponentMgr; // 0xD8
+        struct FrameEngine_Logic_SubBattleMgr_o* subBattleMgr; // 0xE0
+        struct FrameEngine_Logic_ActorRealmMgr_o* realmMgr; // 0xE8
+        struct GameObjectIdGenerator_o* gameObjectIdGenerator; // 0xF0
+        struct FrameEngine_Interface_TargetUtilsBase_o* targetUtils; // 0xF8
+        struct FrameEngine_Common_RPNUtils_o* rpnUtils; // 0x100
+        struct FrameEngine_Logic_BattleDisguiseMgr_o* battleDisguiseMgr; // 0x108
+        struct FrameEngine_Logic_ViolationMgr_o* violationMgr; // 0x110
+    };
+    struct FrameEngine_Logic_Battle_VTable {
+        VirtualInvokeData _0_dummy;
+    };
+    struct FrameEngine_Logic_Battle_c {
+        Il2CppClass_1 _1;
+        struct FrameEngine_Logic_Battle_StaticFields* static_fields;
+        Il2CppRGCTXData* rgctx_data;
+        Il2CppClass_2 _2;
+        FrameEngine_Logic_Battle_VTable vtable;
+    };
+    struct FrameEngine_Logic_Battle_o {
+        FrameEngine_Logic_Battle_c *klass;
+        void *monitor;
+        FrameEngine_Logic_Battle_Fields fields;
+    };
+    struct FrameEngine_Logic_Battle_StaticFields {
+        int32_t TypeID; // 0x0
+        struct System_Collections_Generic_Dictionary_System_Int64_System_Object_o* NativeMap; // 0x0
+        struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x8
+    };
 };
 
 #endif //DOBBY_PROJECT_LOLHEADER_H

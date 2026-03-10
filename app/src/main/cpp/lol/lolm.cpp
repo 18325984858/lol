@@ -126,6 +126,8 @@ lol::lol::~lol() {
 lol::FEVisi::FEVisi(void* dqil2cppBase,void *pCodeRegistration,void *pMetadataRegistration,
                     void *pGlobalMetadataHeader,void* pMetadataImagesTable) {
 
+    m_il2cppBase = dqil2cppBase; // Initialize base address
+
     // 放弃使用 make_shared
     // 直接使用 shared_ptr 的构造函数
     m_pfunctionInfo = std::shared_ptr<fun::function>(new fun::function(
@@ -206,10 +208,128 @@ float lol::FEVisi::DecoderFix64(uint64_t value) {
                 "divideOfOne");
     }
     if (divideOfOne == INVALID_OFFSET) return -1;
+
+    LOG(LOG_LEVEL_INFO,"[MiniMap][DecoderFix64] value : %d divideOfOne : %f",value,divideOfOne);
     return (float)value * divideOfOne;
 }
 
+void *lol::FEVisi::test1(){
+    LOG(LOG_LEVEL_INFO, "[Test1] Start Trace using hardcoded offsets");
+
+    // 1. FEVisi.get_battle()
+    typedef void* (*pBattle_get_battle)();
+    static pBattle_get_battle Battle_get_battle = nullptr;
+    if(Battle_get_battle == nullptr) {
+        Battle_get_battle = (pBattle_get_battle) m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll", "FEVisi", "FrameEngine.Visual.FEVisi", "get_battle");
+    }
+
+    if(!Battle_get_battle) { LOG(LOG_LEVEL_ERROR, "[Test1]Battle_get_battle not found"); return nullptr; }
+    void* pBattle = Battle_get_battle();
+    if (!pBattle) return nullptr;
+
+    // 2. Battle.get_gamePlayComponentMgr()
+    typedef void* (*pBattle_get_gamePlayComponentMgr)(void*);
+    static pBattle_get_gamePlayComponentMgr Battle_get_gamePlayComponentMgr = nullptr;
+    if(Battle_get_gamePlayComponentMgr == nullptr) {
+        Battle_get_gamePlayComponentMgr = (pBattle_get_gamePlayComponentMgr) m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll", "Battle", "FrameEngine.Logic.Battle", "get_gamePlayComponentMgr");
+    }
+    if (!Battle_get_gamePlayComponentMgr) { LOG(LOG_LEVEL_ERROR, "[Test1]Battle_get_gamePlayComponentMgr not found"); return nullptr; }
+    void* pGameplayComponentMgr = Battle_get_gamePlayComponentMgr(pBattle);
+    LOG(LOG_LEVEL_INFO, "[Test1]pGameplayComponentMgr: %p", pGameplayComponentMgr);
+    if (!pGameplayComponentMgr) return nullptr;
+
+    // 3. get_cherryDataMgr()
+    typedef void* (*pGameplayComponentMgr_get_cherryDataMgr)(void*);
+    static pGameplayComponentMgr_get_cherryDataMgr GameplayComponentMgr_get_cherryDataMgr = nullptr;
+    if(GameplayComponentMgr_get_cherryDataMgr == nullptr) {
+        GameplayComponentMgr_get_cherryDataMgr = (pGameplayComponentMgr_get_cherryDataMgr) m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll", "GamePlayComponentMgr", "FrameEngine.Logic.GamePlayComponentMgr", "get_cherryDataMgr");
+    }
+     if (!GameplayComponentMgr_get_cherryDataMgr) { LOG(LOG_LEVEL_ERROR, "[Test1]GamePlayComponentMgr_get_cherryDataMgr not found"); return nullptr; }
+    void* pCherryDataMgr = GameplayComponentMgr_get_cherryDataMgr(pGameplayComponentMgr);
+    LOG(LOG_LEVEL_INFO, "[Test1]pCherryDataMgr: %p", pCherryDataMgr);
+    if (!pCherryDataMgr) return nullptr;
+
+    // 4. get_teamList()
+    typedef void* (*pCherryDataMgr_get_teamList)(void*);
+    static pCherryDataMgr_get_teamList CherryDataMgr_get_teamList = nullptr;
+    if(CherryDataMgr_get_teamList == nullptr) {
+        CherryDataMgr_get_teamList = (pCherryDataMgr_get_teamList) m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll", "CherryDataMgr", "FrameEngine.Logic.CherryDataMgr", "get_teamList");
+    }
+    if (!CherryDataMgr_get_teamList) { LOG(LOG_LEVEL_ERROR, "[Test1]CherryDataMgr_get_teamList not found"); return nullptr; }
+    void* pTeamList = CherryDataMgr_get_teamList(pCherryDataMgr);
+    LOG(LOG_LEVEL_INFO, "[Test1]pTeamList: %p", pTeamList);
+    if (!pTeamList) return nullptr;
+
+    // 5. Iterate List using hardcoded offsets
+    // RVA: 0x08E479E4 Spec: DataShellList<CherryTeam...>.get_Count
+    // RVA: 0x08E478EC Spec: DataShellList<CherryTeam...>.get_Item
+
+    typedef int32_t (*pDataShellList_get_Count)(void*);
+    static pDataShellList_get_Count DataShellList_get_Count = nullptr;
+    if(DataShellList_get_Count == nullptr) {
+        DataShellList_get_Count = (pDataShellList_get_Count) m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll", "DataShellList`4", "FrameEngine.DataShellList<T1,T2,T3,T4>", "get_Count");
+    }
+    LOG(LOG_LEVEL_INFO, "[Test1]DataShellList_get_Count: %p", DataShellList_get_Count);
+
+    int32_t size = DataShellList_get_Count(pTeamList);
+    LOG(LOG_LEVEL_INFO, "[Test1]Team List Size: %d", size);
+
+    for (int i = 0; i < size; i++) {
+        void* pCherryTeam = List_get_Item(pTeamList, i);
+        if (!pCherryTeam) continue;
+
+        // 6. Match Camp & HP using hardcoded offsets
+        // CherryTeam.get_camp RVA: 0x7ddfd5c
+        // CherryTeam.get_curHp RVA: 0x7ddfd48
+
+        typedef int32_t (*pCherryTeam_get_camp)(void*);
+        static pCherryTeam_get_camp CherryTeam_get_camp = nullptr;
+
+        typedef int32_t (*pCherryTeam_get_curHp)(void*);
+        static pCherryTeam_get_curHp CherryTeam_get_curHp = nullptr;
+
+        if (!CherryTeam_get_camp) {
+            CherryTeam_get_camp = (pCherryTeam_get_camp)((uint64_t)m_il2cppBase + 0x7ddfd5c);
+        }
+        if (!CherryTeam_get_curHp) {
+            CherryTeam_get_curHp = (pCherryTeam_get_curHp)((uint64_t)m_il2cppBase + 0x7ddfd48);
+        }
+
+        int32_t camp = (CherryTeam_get_camp) ? CherryTeam_get_camp(pCherryTeam) : -1;
+        int32_t hp = (CherryTeam_get_curHp) ? CherryTeam_get_curHp(pCherryTeam) : 0;
+
+        LOG(LOG_LEVEL_INFO, "[Test1][Team %d] Camp: %d HP: %d", i, camp, hp);
+    }
+
+    return nullptr;
+}
+
 void *lol::FEVisi::test() {
+
+    typedef FrameEngine_Logic_Battle_o* (*pBattle_get_battle)();
+
+    static pBattle_get_battle Battle_get_battle = nullptr;
+
+    if(Battle_get_battle == nullptr) {
+        Battle_get_battle = (pBattle_get_battle) m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so",
+                "Assembly-CSharp.dll",
+                "FEVisi",
+                "FrameEngine.Visual.FEVisi",
+                "get_battle");
+    }
+    LOG(LOG_LEVEL_INFO,"Battle_get_battle : %p",Battle_get_battle);
+    auto pBattle = Battle_get_battle();
+    LOG(LOG_LEVEL_INFO,"pBattle : %p",pBattle);
+
+    return nullptr;
+
+
     constexpr double kFix64Scale = 65536.0;
     struct UnityVector3 {
         float x;
@@ -403,8 +523,8 @@ void *lol::FEVisi::test() {
             LOG(LOG_LEVEL_INFO,"[MiniMap][HP]pBattleActoractor: %p pActorComponentAttribute:%p",pBattleActoractor,pActorComponentAttribute);
 
                 if (pActorComponentAttribute) {
-                    uint64_t value = *(uint64_t *) (
-                            pActorComponentAttribute->fields.__InstanceLongValue + 296);
+                    unsigned int value = *(unsigned int *) (
+                            pActorComponentAttribute->fields.__InstanceLongValue + 0x1C);
                     float d = DecoderFix64(value);
                     LOG(LOG_LEVEL_INFO, "[MiniMap][HP]敌方血量信息: %f", d);
                 }

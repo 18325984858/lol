@@ -896,6 +896,8 @@ void li2cppHeader::li2cppHeader::HandleStringLiteral(
         const MetadataLimits& limits,
         std::vector<ScriptStringEntry>& out)
 {
+
+    /////////////////////////////////////
     if (decodedIndex >= limits.maxStringLiteralIndex) return;
     const auto* stringLiteral = reinterpret_cast<const Il2CppStringLiteral*>(
             (uint64_t)m_pGlobalMetadata + m_pGlobalMetadataHeader->stringLiteralOffset) + decodedIndex;
@@ -1125,7 +1127,7 @@ void li2cppHeader::li2cppHeader::CollectMetadataUsages(
             try {
                 switch (usage) {
                     case kIl2CppMetadataUsageStringLiteral:
-                        HandleStringLiteral(decodedIndex, usageAddr, limits, scriptStrings);
+                        //HandleStringLiteral(decodedIndex, usageAddr, limits, scriptStrings);
                         break;
                     case kIl2CppMetadataUsageTypeInfo:
                         HandleTypeMetadata(decodedIndex, usageAddr, limits, "_TypeInfo", "Il2CppClass*", scriptMetadata);

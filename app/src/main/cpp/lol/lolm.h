@@ -58,6 +58,9 @@ namespace lol {
         /** @brief 析构函数 */
         ~FEVisi();
 
+    private:
+        void* m_il2cppBase; // Store base address
+
     public:
         /** @brief 判断当前是否处于对局（战斗）中 */
         bool get_BattleStarted();
@@ -73,7 +76,7 @@ namespace lol {
     public:
 
         void* test();
-
+        void* test1();
         /**
          * @brief   通过对象基地址 + 偏移读取成员值（模板版本，支持任意类型）
          * @tparam  T       要读取的目标类型（如 int32_t, float, bool, void* 等）
