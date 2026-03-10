@@ -1,0 +1,8 @@
+# clangd
+.cache
+
+# CMake
+build
+
+# VSCode
+settings.json
