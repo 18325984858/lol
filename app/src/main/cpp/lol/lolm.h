@@ -22,6 +22,9 @@
 struct Il2CppGlobalMetadataHeader;
 
 namespace lol {
+    struct FrameEngine_Common_LayoutDump_c;
+    struct FrameEngine_Common_LayoutDump_StaticFields;
+
     /**
      * @struct  LolStrStruct
      * @brief   加密字符串缓存结构 —— 存储解密状态和原始字符串
@@ -72,6 +75,8 @@ namespace lol {
 
     public:
         float DecoderFix64(uint64_t value);
+        FrameEngine_Common_LayoutDump_c* GetLayoutDumpClass();
+        FrameEngine_Common_LayoutDump_StaticFields* GetLayoutDumpStaticFields();
 
     public:
 

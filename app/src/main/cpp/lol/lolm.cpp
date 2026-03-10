@@ -213,6 +213,38 @@ float lol::FEVisi::DecoderFix64(uint64_t value) {
     return (float)value * divideOfOne;
 }
 
+lol::FrameEngine_Common_LayoutDump_c* lol::FEVisi::GetLayoutDumpClass() {
+    static FrameEngine_Common_LayoutDump_c* s_layoutDumpClass = nullptr;
+    if (s_layoutDumpClass != nullptr) {
+        return s_layoutDumpClass;
+    }
+    if (m_pfunctionInfo == nullptr) {
+        LOG(LOG_LEVEL_ERROR, "[LayoutDump] m_pfunctionInfo is null");
+        return nullptr;
+    }
+
+    s_layoutDumpClass = reinterpret_cast<FrameEngine_Common_LayoutDump_c*>(
+            (u_int64_t)m_pfunctionInfo->FindClassByName(
+                    "ilbil2cpp.so",
+                    "Assembly-CSharp.dll",
+                    "LayoutDump",
+                    "FrameEngine.Common.LayoutDump"));
+    LOG(LOG_LEVEL_INFO, "[LayoutDump] class: %p", s_layoutDumpClass);
+    return s_layoutDumpClass;
+}
+
+lol::FrameEngine_Common_LayoutDump_StaticFields* lol::FEVisi::GetLayoutDumpStaticFields() {
+    auto* pLayoutDumpClass = GetLayoutDumpClass();
+    if (pLayoutDumpClass == nullptr) {
+        return nullptr;
+    }
+    if (pLayoutDumpClass->static_fields == nullptr) {
+        LOG(LOG_LEVEL_ERROR, "[LayoutDump] static_fields is null, class: %p", pLayoutDumpClass);
+        return nullptr;
+    }
+    return pLayoutDumpClass->static_fields;
+}
+
 void *lol::FEVisi::test1(){
     LOG(LOG_LEVEL_INFO, "[Test1] Start Trace using hardcoded offsets");
 
@@ -273,8 +305,8 @@ void *lol::FEVisi::test1(){
     typedef int32_t (*pDataShellList_get_Count)(void*);
     static pDataShellList_get_Count DataShellList_get_Count = nullptr;
     if(DataShellList_get_Count == nullptr) {
-        DataShellList_get_Count = (pDataShellList_get_Count) m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll", "DataShellList`4", "FrameEngine.DataShellList<T1,T2,T3,T4>", "get_Count");
+        DataShellList_get_Count = (pDataShellList_get_Count) m_pfunctionInfo->GetGenericMethodFun(
+                "DataShellList", "get_Count");
     }
     LOG(LOG_LEVEL_INFO, "[Test1]DataShellList_get_Count: %p", DataShellList_get_Count);
 
@@ -285,8 +317,8 @@ void *lol::FEVisi::test1(){
     typedef void* (*pDataShellList_get_Item)(void*,int);
     static pDataShellList_get_Item DataShellList_get_Item = nullptr;
     if(DataShellList_get_Item == nullptr) {
-        DataShellList_get_Item = (pDataShellList_get_Item) m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll", "DataShellList`4", "FrameEngine.DataShellList<T1,T2,T3,T4>", "get_Item");
+        DataShellList_get_Item = (pDataShellList_get_Item) m_pfunctionInfo->GetGenericMethodFun(
+                "DataShellList", "get_Item" );
     }
     LOG(LOG_LEVEL_INFO, "[Test1]DataShellList_get_Item: %p", DataShellList_get_Item);
 
@@ -322,26 +354,6 @@ void *lol::FEVisi::test1(){
 }
 
 void *lol::FEVisi::test() {
-
-    typedef FrameEngine_Logic_Battle_o* (*pBattle_get_battle)();
-
-    static pBattle_get_battle Battle_get_battle = nullptr;
-
-    if(Battle_get_battle == nullptr) {
-        Battle_get_battle = (pBattle_get_battle) m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so",
-                "Assembly-CSharp.dll",
-                "FEVisi",
-                "FrameEngine.Visual.FEVisi",
-                "get_battle");
-    }
-    LOG(LOG_LEVEL_INFO,"Battle_get_battle : %p",Battle_get_battle);
-    auto pBattle = Battle_get_battle();
-    LOG(LOG_LEVEL_INFO,"pBattle : %p",pBattle);
-
-    return nullptr;
-
-
     constexpr double kFix64Scale = 65536.0;
     struct UnityVector3 {
         float x;
@@ -535,8 +547,18 @@ void *lol::FEVisi::test() {
             LOG(LOG_LEVEL_INFO,"[MiniMap][HP]pBattleActoractor: %p pActorComponentAttribute:%p",pBattleActoractor,pActorComponentAttribute);
 
                 if (pActorComponentAttribute) {
+                    auto* pLayoutDumpStaticFields = GetLayoutDumpStaticFields();
+                    if (pLayoutDumpStaticFields == nullptr) {
+                        LOG(LOG_LEVEL_ERROR, "[MiniMap][HP] LayoutDump static_fields is null");
+                        continue;
+                    }
+
+                    uint32_t ActorComponentAttribute_curHP_offset =
+                            pLayoutDumpStaticFields->FrameEngine_Logic_ActorComponentAttribute_curHP_offset;
+                    LOG(LOG_LEVEL_INFO,"[MiniMap][HP]ActorComponentAttribute_curHP_offset: %d",ActorComponentAttribute_curHP_offset);
+
                     uint64_t value = *(uint64_t *) (
-                            pActorComponentAttribute->fields.__InstanceLongValue + 0x138);
+                            pActorComponentAttribute->fields.__InstanceLongValue + ActorComponentAttribute_curHP_offset);
                     float d = DecoderFix64(value);
                     LOG(LOG_LEVEL_INFO, "[MiniMap][HP]敌方血量信息: %f", d);
                 }

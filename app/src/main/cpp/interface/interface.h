@@ -67,12 +67,29 @@ namespace fun {
 
     /**
      * @struct  _ClassInfo
-     * @brief   模块级类信息 —— 一个模块下包含的所有类数据
+     * @brief   模块级类信息 —— 一个模块下包���的所有类数据
      */
     typedef struct _ClassInfo{
         std::shared_ptr<CData> m_ModuleData;                                                ///< 模块名称及偏移信息
         std::shared_ptr<std::vector<CClassData>> m_pClassStruct;                            ///< 当前模块下的所有类结构列表
     }CClassInfo,*PCClassInfo;
+
+    /**
+     * @struct  CGenericMethodData
+     * @brief   泛型方法实例数据 —— 存储泛型方法的名称、Spec 全名和实际地址
+     *
+     * @details 例如对于 DataShellList<CherryTeam,IsDemData,IsSyncData,NotSharedPtr>.get_Count
+     *          m_pMethodName  = "get_Count"
+     *          m_pSpecName    = "DataShellList<CherryTeam, IsDemData, IsSyncData, NotSharedPtr>.get_Count"
+     *          m_pClassName   = "DataShellList"
+     *          m_offset       = 实际内存地址（绝对地址，非 RVA）
+     */
+    typedef struct CGenericMethodData{
+        std::string m_pMethodName;      ///< 方法名（如 get_Count）
+        std::string m_pSpecName;        ///< Spec 完整名（类名<泛型参数>.方法名）
+        std::string m_pClassName;       ///< 去掉反引号后的类名（如 DataShellList）
+        uint64_t    m_offset = 0;       ///< 方法在内存中的绝对地址
+    }CGenericMethodData;
 
 
 
@@ -138,7 +155,7 @@ namespace fun {
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // 获取指定类中任意成员（不区分静态/实例）的偏移信息
         // 参数一：模块名例如 libil2cpp.so
-        // 参数二：类所在模块名例如 Assembly-CSharp.dll
+        // 参数二：类所在模块名例如 Assembly-Csharp.dll
         // 参数三：类名 例如 BattleBaseUI
         // 参数四：泛型名 例如 BattleBaseUI（为空则不限定泛型）
         // 参数五：要查找的成员名称
@@ -157,6 +174,22 @@ namespace fun {
         // 参数六：要查找成员方法的泛型名
         // 返回值：成功返回找到的值，失败返回0
         uint64_t GetMethodFun(std::string pMainModuleName, std::string pModuleName,std::string pClassName, std::string ptemplateName,std::string pMethodName,std::string pMethodtemplateName = "");
+        /**
+         * @brief   通过运行时 Il2CppClass 直接查找方法地址（适合泛型实例类）
+         * @param   pKlass       运行时类对象
+         * @param   pMethodName  方法名
+         * @param   pParamCount  参数个数；传 -1 表示不限制
+         * @return  成功返回方法地址，失败返回 0
+         */
+        uint64_t GetMethodFunByClass(Il2CppClass* pKlass, std::string pMethodName, int32_t pParamCount = -1);
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        // 获取泛型实例化方法的地址（从 genericMethodTable 中查找）
+        // 参数一：Spec 全名中的类名部分（去掉反引号），例如 "DataShellList"
+        // 参数二：Spec 全名中的方法名部分，例如 "get_Count"
+        // 参数三：Spec 全名中的泛型参数（可选，为空则只匹配类名+方法名），例如 "CherryTeam, IsDemData, IsSyncData, NotSharedPtr"
+        // 返回值：成功返回方法在内存中的绝对地址，失败返回 0
+        uint64_t GetGenericMethodFun(std::string pClassName, std::string pMethodName, std::string pGenericArgs = "");
         //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         /**
@@ -221,6 +254,19 @@ namespace fun {
         std::string m_pathlog = "";                                                 ///< 日志文件路径
         std::shared_ptr<cMyfile> m_outlog = nullptr;                                ///< 日志文件输出流
         std::shared_ptr<std::list<std::shared_ptr<CClassInfo>>>m_pClassInfo = nullptr; ///< 全局类信息链表（按模块组织）
+
+        /// 泛型方法实例化列表（从 genericMethodTable 遍历得到）
+        std::shared_ptr<std::vector<std::shared_ptr<CGenericMethodData>>> m_pGenericMethodList = nullptr;
+
+    private:
+        /** @brief 遍历 genericMethodTable，填充 m_pGenericMethodList */
+        void fillingGenericMethodInfo();
+
+        /** @brief 获取泛型实例参数字符串 <T1, T2, ...>（从 Il2CppGenericInst 解析） */
+        std::string getGenericInstName(GenericInstIndex index);
+
+        /** @brief 获取 Il2CppType 的简短类型名 */
+        std::string getTypeName(const Il2CppType* type);
     };
 
 }
