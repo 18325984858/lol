@@ -6,7 +6,7 @@
 #include "../UnityApi/unityapi.h"
 #include "../Log/log.h"
 #include "LolOffset.h"
-#include <cmath>
+#include <cstring>
 
 
 
@@ -50,13 +50,11 @@ std::string lol::lol::decryPtthestring(char*Srcstr, uint32_t nameIndex) {
         *(uint32_t *)((uint64_t)this->parrayStringIndex + 4 * ((int)nameIndex >> 5)) |= 1 << (nameIndex & 0x1F);
     }
 
-    //新曾节点保存解密后的字符串
+    //保存解密后的字符串
     auto pnewNode = std::make_shared<LolStrStruct>();
-    if (pnewNode) {
-        pnewNode->isDecryption = 1;
-        pnewNode->srcStr = Srcstr;
-        this->m_pMapStringIndex->insert({nameIndex, pnewNode});
-    }
+    pnewNode->isDecryption = 1;
+    pnewNode->srcStr = Srcstr;
+    this->m_pMapStringIndex->insert({nameIndex, pnewNode});
     LOG(LOG_LEVEL_INFO,"end nameIndex : %d Srcstr : %p Srcstrvalue : %s",nameIndex,Srcstr,Srcstr);
     return Srcstr;
 }
@@ -93,6 +91,39 @@ bool lol::lol::IsEncryptionOrIsDecryption(uint32_t nameIndex) {
     return (IsEncryption & IsDecryption) == 0;
 }
 
+uint32_t lol::FEVisi::GetFieldOffsetFromKlass(Il2CppClass* klass, const char* fieldName) {
+    if (!klass || !fieldName || !m_pfunctionInfo) return INVALID_OFFSET;
+    auto* current = reinterpret_cast<::Il2CppClass*>(klass);
+    while (current) {
+        void* iter = nullptr;
+        while (auto* field = m_pfunctionInfo->il2cpp_class_get_fields(current, &iter)) {
+            const char* name = m_pfunctionInfo->il2cpp_field_get_name(field);
+            if (name && strcmp(name, fieldName) == 0) {
+                return (uint32_t)m_pfunctionInfo->il2cpp_field_get_offset(field);
+            }
+        }
+        current = m_pfunctionInfo->il2cpp_class_get_parent(current);
+    }
+    return INVALID_OFFSET;
+}
+
+bool lol::FEVisi::ReadStaticFieldInt32(Il2CppClass* klass, const char* fieldName, int32_t& outValue) {
+    if (!klass || !fieldName || !m_pfunctionInfo) return false;
+    auto* current = reinterpret_cast<::Il2CppClass*>(klass);
+    while (current) {
+        void* iter = nullptr;
+        while (auto* field = m_pfunctionInfo->il2cpp_class_get_fields(current, &iter)) {
+            const char* name = m_pfunctionInfo->il2cpp_field_get_name(field);
+            if (name && strcmp(name, fieldName) == 0) {
+                m_pfunctionInfo->il2cpp_field_static_get_value(field, &outValue);
+                return true;
+            }
+        }
+        current = m_pfunctionInfo->il2cpp_class_get_parent(current);
+    }
+    return false;
+}
+
 lol::lol::lol(void* dqil2cppBase,void *pCodeRegistration,
               void *pMetadataRegistration,void *pGlobalMetadataHeader,
               void* pMetadataImagesTable):
@@ -112,75 +143,42 @@ lol::lol::~lol() {
     if(this->parrayStringIndex){
         free(this->parrayStringIndex);
     }
-
-    if(this->m_pMapStringIndex){
-        // 使用 auto& 以便直接修改 Map 内部存储的原始值
-        for (auto& it : *this->m_pMapStringIndex) {
-            it.second.reset();
-        }
-        this->m_pMapStringIndex->clear();
-        this->m_pMapStringIndex= nullptr;
-    }
+    this->m_pMapStringIndex = nullptr;
 }
 
 lol::FEVisi::FEVisi(void* dqil2cppBase,void *pCodeRegistration,void *pMetadataRegistration,
-                    void *pGlobalMetadataHeader,void* pMetadataImagesTable) {
-
-    m_il2cppBase = dqil2cppBase; // Initialize base address
-
-    // 放弃使用 make_shared
-    // 直接使用 shared_ptr 的构造函数
-    m_pfunctionInfo = std::shared_ptr<fun::function>(new fun::function(
-            (void*)dqil2cppBase,
-            (void*)pCodeRegistration,
-            (void*)pMetadataRegistration,
-            (void*)pGlobalMetadataHeader,
-            (void*)pMetadataImagesTable
-    ));
-    if(m_pfunctionInfo == nullptr){
-        LOG(LOG_LEVEL_ERROR,"[Test Game] FEVisi 构造函数失败");
-    }
-
-    //初始化填充数据
+                    void *pGlobalMetadataHeader,void* pMetadataImagesTable)
+    : m_il2cppBase(dqil2cppBase)
+    , m_pfunctionInfo(std::make_shared<fun::function>(
+            dqil2cppBase, pCodeRegistration, pMetadataRegistration,
+            pGlobalMetadataHeader, pMetadataImagesTable))
+{
     m_pfunctionInfo->fillingClassInfo();
 }
 
-lol::FEVisi::~FEVisi() {
-    if(m_pfunctionInfo){
-        m_pfunctionInfo = NULL;
-    }
-}
+lol::FEVisi::~FEVisi() = default;
 
 
 bool lol::FEVisi::get_BattleStarted() {
-    bool isOpening = false;
     typedef bool (*get_BattleStartedpfn)();
-    get_BattleStartedpfn pget_BattleStarted = (get_BattleStartedpfn)m_pfunctionInfo->GetMethodFun(
+    auto pget_BattleStarted = (get_BattleStartedpfn)m_pfunctionInfo->GetMethodFun(
             "ilbil2cpp.so",
             "Assembly-CSharp.dll",
             "FEVisi",
             "FrameEngine.Visual.FEVisi",
             "get_BattleStarted");
-    if(pget_BattleStarted){
-         isOpening = pget_BattleStarted();
-    }
-    return isOpening;
+    return pget_BattleStarted ? pget_BattleStarted() : false;
 }
 
 void *lol::FEVisi::get_battleTeamMgr() {
     typedef void* (*get_battleTeamMgrpfn)();
-    void*pData = nullptr;
-
-    get_battleTeamMgrpfn get_battleTeamMgrfun = (get_battleTeamMgrpfn)m_pfunctionInfo->GetMethodFun(
+    auto fn = (get_battleTeamMgrpfn)m_pfunctionInfo->GetMethodFun(
             "ilbil2cpp.so",
             "Assembly-CSharp.dll",
             "FEVisi",
             "FrameEngine.Visual.FEVisi",
             "get_battleTeamMgr");
-    if(get_battleTeamMgrfun){
-        pData = get_battleTeamMgrfun();
-    }
-    return pData;
+    return fn ? fn() : nullptr;
 }
 
 int32_t lol::FEVisi::get_MiniIconBaseCtrlType(void* pData) {
@@ -199,374 +197,379 @@ int32_t lol::FEVisi::get_MiniIconBaseCtrlType(void* pData) {
 
 float lol::FEVisi::DecoderFix64(uint64_t value) {
 
-    static float divideOfOne = INVALID_OFFSET;
+    static float divideOfOne = 0.0f;
+    static bool divideOfOneInit = false;
 
-    if(divideOfOne == INVALID_OFFSET) {
-        divideOfOne = m_pfunctionInfo->GetStaticMember(
+    if(!divideOfOneInit) {
+        divideOfOneInit = true;
+        uint64_t rawBits = m_pfunctionInfo->GetStaticMember(
                 "ilbil2cpp.so", "Assembly-CSharp.dll",
                 "Fix64", "FrameEngine.Common.Fix64",
                 "divideOfOne");
+        // GetStaticMember 返回原始 IEEE 754 位模式，需要按位重新解释为 float
+        memcpy(&divideOfOne, &rawBits, sizeof(float));
+        LOG(LOG_LEVEL_INFO,"[MiniMap][DecoderFix64] rawBits=0x%llX divideOfOne=%f",
+            (unsigned long long)rawBits, divideOfOne);
     }
-    if (divideOfOne == INVALID_OFFSET) return -1;
+    if (divideOfOne == 0.0f) return -1;
 
-    LOG(LOG_LEVEL_INFO,"[MiniMap][DecoderFix64] value : %d divideOfOne : %f",value,divideOfOne);
+    LOG(LOG_LEVEL_INFO,"[MiniMap][DecoderFix64] value : %llu divideOfOne : %f",
+        (unsigned long long)value, divideOfOne);
     return (float)value * divideOfOne;
 }
 
-lol::FrameEngine_Common_LayoutDump_c* lol::FEVisi::GetLayoutDumpClass() {
-    static FrameEngine_Common_LayoutDump_c* s_layoutDumpClass = nullptr;
-    if (s_layoutDumpClass != nullptr) {
-        return s_layoutDumpClass;
+// ═══════════════════════════════════════════════════════════════════════════════
+// MiniMap 拆分函数实现
+// ═══════════════════════════════════════════════════════════════════════════════
+
+std::string lol::FEVisi::getManagedTypeName(void* pObject) {
+    if (pObject == nullptr) return "<null>";
+
+    auto* klass = GetObjectKlass(pObject);
+    if (klass == nullptr) return "<no-klass>";
+
+    auto* rKlass = reinterpret_cast<::Il2CppClass*>(klass);
+    const char* pNamespace = m_pfunctionInfo->il2cpp_class_get_namespace(rKlass);
+    const char* pName = m_pfunctionInfo->il2cpp_class_get_name(rKlass);
+    if (pNamespace && pNamespace[0] != '\0') {
+        return std::string(pNamespace) + "." + (pName ? pName : "<unnamed>");
     }
-    if (m_pfunctionInfo == nullptr) {
-        LOG(LOG_LEVEL_ERROR, "[LayoutDump] m_pfunctionInfo is null");
+    return pName ? std::string(pName) : std::string("<unnamed>");
+}
+
+void* lol::FEVisi::getMiniIconsDictionary() {
+    auto* _entityCtrl = (void*)m_pfunctionInfo->GetStaticMember(
+            "ilbil2cpp.so", "Assembly-CSharp.dll",
+            "UIMainBattleMiniMapCtrl", "UIMainBattleMiniMapCtrl",
+            "_entityCtrl");
+    if (_entityCtrl == nullptr) {
+        LOG(LOG_LEVEL_ERROR, "[MiniMap] _entityCtrl 为空");
         return nullptr;
     }
 
-    s_layoutDumpClass = reinterpret_cast<FrameEngine_Common_LayoutDump_c*>(
-            (u_int64_t)m_pfunctionInfo->FindClassByName(
-                    "ilbil2cpp.so",
-                    "Assembly-CSharp.dll",
-                    "LayoutDump",
-                    "FrameEngine.Common.LayoutDump"));
-    LOG(LOG_LEVEL_INFO, "[LayoutDump] class: %p", s_layoutDumpClass);
-    return s_layoutDumpClass;
+    uint32_t miniMapIconCtrlOffset = GetFieldOffset(
+            "Assembly-CSharp.dll", "MiniMapEntityCtrl", "MiniMapEntityCtrl", "miniMapIconCtrl");
+    if (miniMapIconCtrlOffset == INVALID_OFFSET) return nullptr;
+
+    void* miniMapIconCtrl = ReadMemberPtr(_entityCtrl, miniMapIconCtrlOffset);
+    if (miniMapIconCtrl == nullptr) return nullptr;
+
+    uint32_t miniIconsOffset = GetFieldOffset(
+            "Assembly-CSharp.dll", "UIMiniMapIconCtrl", "UIMiniMapIconCtrl", "miniIcons");
+    if (miniIconsOffset == INVALID_OFFSET) return nullptr;
+
+    auto* pDict = ReadMemberPtr(miniMapIconCtrl, miniIconsOffset);
+    if (pDict == nullptr) {
+        LOG(LOG_LEVEL_ERROR, "[MiniMap] miniIcons Dictionary 为空");
+    }
+    return pDict;
 }
 
-lol::FrameEngine_Common_LayoutDump_StaticFields* lol::FEVisi::GetLayoutDumpStaticFields() {
-    auto* pLayoutDumpClass = GetLayoutDumpClass();
-    if (pLayoutDumpClass == nullptr) {
-        return nullptr;
+bool lol::FEVisi::tryGetWorldPosition(void* pObject, UnityVector3& outPos) {
+    using GetPositionFn = UnityVector3(*)(void*);
+    static GetPositionFn s_getPosition = nullptr;
+
+    if (!s_getPosition) {
+        s_getPosition = reinterpret_cast<GetPositionFn>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FixGameObjectVisi", "FrameEngine.Visual.FixGameObjectVisi",
+                "GetPosition"));
     }
-    if (pLayoutDumpClass->static_fields == nullptr) {
-        LOG(LOG_LEVEL_ERROR, "[LayoutDump] static_fields is null, class: %p", pLayoutDumpClass);
-        return nullptr;
-    }
-    return pLayoutDumpClass->static_fields;
+    if (pObject == nullptr || s_getPosition == nullptr) return false;
+    outPos = s_getPosition(pObject);
+    return true;
 }
 
-void *lol::FEVisi::test1(){
-    LOG(LOG_LEVEL_INFO, "[Test1] Start Trace using hardcoded offsets");
+bool lol::FEVisi::getIconWorldPos(void* baseCtrl, void* actor, UnityVector3* outWorldPos) {
 
-    // 1. FEVisi.get_battle()
-    typedef void* (*pBattle_get_battle)();
-    static pBattle_get_battle Battle_get_battle = nullptr;
-    if(Battle_get_battle == nullptr) {
-        Battle_get_battle = (pBattle_get_battle) m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll", "FEVisi", "FrameEngine.Visual.FEVisi", "get_battle");
+    // ── 缓存 followObj 字段偏移 ──
+    static uint32_t s_followObjOffset = INVALID_OFFSET;
+    if (s_followObjOffset == INVALID_OFFSET) {
+        s_followObjOffset = GetFieldOffset(
+                "Assembly-CSharp.dll", "UIMiniIconBaseCtrl",
+                "UIMiniIconBaseCtrl", "followObj");
     }
 
-    if(!Battle_get_battle) { LOG(LOG_LEVEL_ERROR, "[Test1]Battle_get_battle not found"); return nullptr; }
-    void* pBattle = Battle_get_battle();
-    if (!pBattle) return nullptr;
-
-    // 2. Battle.get_gamePlayComponentMgr()
-    typedef void* (*pBattle_get_gamePlayComponentMgr)(void*);
-    static pBattle_get_gamePlayComponentMgr Battle_get_gamePlayComponentMgr = nullptr;
-    if(Battle_get_gamePlayComponentMgr == nullptr) {
-        Battle_get_gamePlayComponentMgr = (pBattle_get_gamePlayComponentMgr) m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll", "Battle", "FrameEngine.Logic.Battle", "get_gamePlayComponentMgr");
-    }
-    if (!Battle_get_gamePlayComponentMgr) { LOG(LOG_LEVEL_ERROR, "[Test1]Battle_get_gamePlayComponentMgr not found"); return nullptr; }
-    void* pGameplayComponentMgr = Battle_get_gamePlayComponentMgr(pBattle);
-    LOG(LOG_LEVEL_INFO, "[Test1]pGameplayComponentMgr: %p", pGameplayComponentMgr);
-    if (!pGameplayComponentMgr) return nullptr;
-
-    // 3. get_cherryDataMgr()
-    typedef void* (*pGameplayComponentMgr_get_cherryDataMgr)(void*);
-    static pGameplayComponentMgr_get_cherryDataMgr GameplayComponentMgr_get_cherryDataMgr = nullptr;
-    if(GameplayComponentMgr_get_cherryDataMgr == nullptr) {
-        GameplayComponentMgr_get_cherryDataMgr = (pGameplayComponentMgr_get_cherryDataMgr) m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll", "GamePlayComponentMgr", "FrameEngine.Logic.GamePlayComponentMgr", "get_cherryDataMgr");
-    }
-     if (!GameplayComponentMgr_get_cherryDataMgr) { LOG(LOG_LEVEL_ERROR, "[Test1]GamePlayComponentMgr_get_cherryDataMgr not found"); return nullptr; }
-    void* pCherryDataMgr = GameplayComponentMgr_get_cherryDataMgr(pGameplayComponentMgr);
-    LOG(LOG_LEVEL_INFO, "[Test1]pCherryDataMgr: %p", pCherryDataMgr);
-    if (!pCherryDataMgr) return nullptr;
-
-    // 4. get_teamList()
-    typedef void* (*pCherryDataMgr_get_teamList)(void*);
-    static pCherryDataMgr_get_teamList CherryDataMgr_get_teamList = nullptr;
-    if(CherryDataMgr_get_teamList == nullptr) {
-        CherryDataMgr_get_teamList = (pCherryDataMgr_get_teamList) m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll", "CherryDataMgr", "FrameEngine.Logic.CherryDataMgr", "get_teamList");
-    }
-    if (!CherryDataMgr_get_teamList) { LOG(LOG_LEVEL_ERROR, "[Test1]CherryDataMgr_get_teamList not found"); return nullptr; }
-    void* pTeamList = CherryDataMgr_get_teamList(pCherryDataMgr);
-    LOG(LOG_LEVEL_INFO, "[Test1]pTeamList: %p", pTeamList);
-    if (!pTeamList) return nullptr;
-
-    // 5. Iterate List using hardcoded offsets
-    // RVA: 0x08E479E4 Spec: DataShellList<CherryTeam...>.get_Count
-    // RVA: 0x08E478EC Spec: DataShellList<CherryTeam...>.get_Item
-
-
-
-    typedef int32_t (*pDataShellList_get_Count)(void*);
-    static pDataShellList_get_Count DataShellList_get_Count = nullptr;
-    if(DataShellList_get_Count == nullptr) {
-        DataShellList_get_Count = (pDataShellList_get_Count) m_pfunctionInfo->GetGenericMethodFun(
-                "DataShellList", "get_Count");
-    }
-    LOG(LOG_LEVEL_INFO, "[Test1]DataShellList_get_Count: %p", DataShellList_get_Count);
-
-    int32_t size = DataShellList_get_Count(pTeamList);
-    LOG(LOG_LEVEL_INFO, "[Test1]Team List Size: %d", size);
-
-
-    typedef void* (*pDataShellList_get_Item)(void*,int);
-    static pDataShellList_get_Item DataShellList_get_Item = nullptr;
-    if(DataShellList_get_Item == nullptr) {
-        DataShellList_get_Item = (pDataShellList_get_Item) m_pfunctionInfo->GetGenericMethodFun(
-                "DataShellList", "get_Item" );
-    }
-    LOG(LOG_LEVEL_INFO, "[Test1]DataShellList_get_Item: %p", DataShellList_get_Item);
-
-
-    for (int i = 0; i < size; i++) {
-        void* pCherryTeam = DataShellList_get_Item(pTeamList, i);
-        if (!pCherryTeam) continue;
-
-        // 6. Match Camp & HP using hardcoded offsets
-        // get_camp RVA: 0x7ddfd5c
-        // get_curHp RVA: 0x7ddfd48
-
-        typedef int32_t (*pCherryTeam_get_camp)(void*);
-        static pCherryTeam_get_camp CherryTeam_get_camp = nullptr;
-
-        typedef int32_t (*pCherryTeam_get_curHp)(void*);
-        static pCherryTeam_get_curHp CherryTeam_get_curHp = nullptr;
-
-        if (!CherryTeam_get_camp) {
-            CherryTeam_get_camp = (pCherryTeam_get_camp)((uint64_t)m_il2cppBase + 0x7ddfd5c);
-        }
-        if (!CherryTeam_get_curHp) {
-            CherryTeam_get_curHp = (pCherryTeam_get_curHp)((uint64_t)m_il2cppBase + 0x7ddfd48);
-        }
-
-        int32_t camp = (CherryTeam_get_camp) ? CherryTeam_get_camp(pCherryTeam) : -1;
-        int32_t hp = (CherryTeam_get_curHp) ? CherryTeam_get_curHp(pCherryTeam) : 0;
-
-        LOG(LOG_LEVEL_INFO, "[Test1][Team %d] Camp: %d HP: %d", i, camp, hp);
+    // ── 从 baseCtrl 读取 followObj ──
+    void* followObj = nullptr;
+    if (baseCtrl && s_followObjOffset != INVALID_OFFSET) {
+        followObj = ReadMemberPtr(baseCtrl, s_followObjOffset);
     }
 
-    return nullptr;
+    // ── 优先从 actor 获取世界坐标，失败则从 followObj 获取 ──
+    UnityVector3 pos{};
+    bool hasWorldPos = tryGetWorldPosition(actor, pos)
+                       || tryGetWorldPosition(followObj, pos);
+
+    if (hasWorldPos && outWorldPos) {
+        *outWorldPos = pos;
+    }
+    return hasWorldPos;
 }
+
+bool lol::FEVisi::isWardLikeIcon(int32_t iconType, void* actor,
+                                  const std::string& baseCtrlTypeName,
+                                  const std::string& actorTypeName) {
+    using BoolFn = bool(*)(void*);
+    static BoolFn s_isNeutralEye = nullptr;
+    static BoolFn s_isSummonedWards = nullptr;
+
+    if (!s_isNeutralEye) {
+        s_isNeutralEye = reinterpret_cast<BoolFn>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
+                "IsNeutralEye"));
+    }
+    if (!s_isSummonedWards) {
+        s_isSummonedWards = reinterpret_cast<BoolFn>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
+                "IsSummonedWards"));
+    }
+
+    // 1) 图标类型直接匹配
+    if ((MiniMapIconType)iconType == MiniMapIconType_MyTeamWard) return true;
+
+    // 2) 运行时方法检测
+    if (actor != nullptr) {
+        if (s_isNeutralEye && s_isNeutralEye(actor)) return true;
+        if (s_isSummonedWards && s_isSummonedWards(actor)) return true;
+    }
+
+    // 3) 类型名关键字匹配
+    if (baseCtrlTypeName.find("Ward") != std::string::npos ||
+        baseCtrlTypeName.find("Eye")  != std::string::npos ||
+        actorTypeName.find("Ward")    != std::string::npos ||
+        actorTypeName.find("Eye")     != std::string::npos) {
+        return true;
+    }
+
+    return false;
+}
+
+
+void* lol::FEVisi::getActorAttribute(void* actorVisi) {
+    if (!actorVisi) return nullptr;
+
+    // ── BattleActorVisi → get_actor() → BattleActor ──
+    typedef void* (*pGetLogicActor)(void*);
+    static pGetLogicActor s_getLogicActor = nullptr;
+    if (!s_getLogicActor) {
+        s_getLogicActor = (pGetLogicActor)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
+                "get_actor");
+    }
+    if (!s_getLogicActor) return nullptr;
+
+    void* pBattleActor = s_getLogicActor(actorVisi);
+    if (!pBattleActor) return nullptr;
+
+    // ── BattleActor → get_attribute() → ActorComponentAttribute ──
+    typedef void* (*pGetAttribute)(void*);
+    static pGetAttribute s_getAttribute = nullptr;
+    if (!s_getAttribute) {
+        s_getAttribute = (pGetAttribute)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActor", "FrameEngine.Logic.BattleActor",
+                "get_attribute");
+    }
+    if (!s_getAttribute) return nullptr;
+
+    return s_getAttribute(pBattleActor);
+}
+
+uint32_t lol::FEVisi::readEnemyHeroLeve(void* pAttribute) {
+    if (!pAttribute) return 0;
+
+    // nativeData = *(pAttribute + 0x18)
+    int64_t nativeData = *(int64_t*)((uint8_t*)pAttribute + 0x18);
+    if (!nativeData) return 0;
+
+    // heroLevel = *(nativeData + 0x78)  — RVA 0x8495058
+    return *(uint32_t*)(nativeData + 0x78);
+}
+
+void lol::FEVisi::readEnemyHeroHP(void* pAttribute,float* curHp, float* maxHp) {
+    if (!pAttribute) return;
+
+    // ═══════════════════════════════════════════════════════════════
+    // IDA 逆向确认的 HP 读取方式 (已通过血条UI函数交叉验证):
+    //   nativeData = *(pAttribute + 0x18)
+    //   curHP(Fix64) = *(nativeData + 0x138)  — RVA 0x8495B98
+    //   maxHP(Fix64) = GetFixAttrValue(attr, 2) — RVA 0x84959E0
+    //   maxHP(备用)  = RVA 0x8495BC8(this)
+    //   heroLevel    = *(nativeData + 0x78)   — RVA 0x8495058
+    //   shield       = *(nativeData + 0F0)   — RVA 0x849510C
+    // ═══════════════════════════════════════════════════════════════
+
+    int64_t nativeData = *(int64_t*)((uint8_t*)pAttribute + 0x18);
+    if (!nativeData) {
+        LOG(LOG_LEVEL_ERROR, "[MiniMap][HP] nativeData(this+0x18) 为空!");
+        return;
+    }
+
+    //当前生命值的偏移位置
+    int64_t curHP_raw  = *(int64_t*)(nativeData + 0x138);
+
+    // maxHP: GetFixAttrValue(attr, 2)
+    typedef int64_t (*pGetMaxHP)(void*);
+    static pGetMaxHP s_getMaxHP = nullptr;
+    if (!s_getMaxHP)
+        s_getMaxHP = (pGetMaxHP)((uint64_t)m_il2cppBase + 0x84959E0);
+
+    int64_t maxHP_raw = s_getMaxHP ? s_getMaxHP(pAttribute) : 0;
+
+    // 备用: sub_8495BC8 (nativeData+0xB8 缓存 → GetFixAttrValue(0x17)*GetFixAttrValue(0x18))
+    if (maxHP_raw == 0) {
+        typedef int64_t (*pGetMaxHP_Fallback)(void*);
+        static pGetMaxHP_Fallback s_getMaxHP_Fallback = nullptr;
+        if (!s_getMaxHP_Fallback)
+            s_getMaxHP_Fallback = (pGetMaxHP_Fallback)((uint64_t)m_il2cppBase + 0x8495BC8);
+        if (s_getMaxHP_Fallback)
+            maxHP_raw = s_getMaxHP_Fallback(pAttribute);
+    }
+
+    if(curHp){
+        *curHp = DecoderFix64(curHP_raw); // Fix64 转 float
+    }
+    if(maxHp){
+        *maxHp = DecoderFix64(maxHP_raw); // Fix64 转 float
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// test() — 小地图主循环（遍历所有图标，处理敌方英雄HP和眼位坐标）
+// ═══════════════════════════════════════════════════════════════════════════════
 
 void *lol::FEVisi::test() {
-    constexpr double kFix64Scale = 65536.0;
-    struct UnityVector3 {
-        float x;
-        float y;
-        float z;
-    };
-
-    auto fix64ToDouble = [](int64_t rawValue) -> double {
-        return static_cast<double>(rawValue) / kFix64Scale;
-    };
-    auto getManagedTypeName = [](void* pObject) -> std::string {
-        if (pObject == nullptr) return "<null>";
-
-        auto* pManagedObject = reinterpret_cast<Il2CppObject*>(pObject);
-        if (pManagedObject->klass == nullptr) return "<no-klass>";
-
-        const char* pNamespace = pManagedObject->klass->_1.namespaze;
-        const char* pName = pManagedObject->klass->_1.name;
-        if (pNamespace && pNamespace[0] != '\0') {
-            return std::string(pNamespace) + "." + (pName ? pName : "<unnamed>");
-        }
-        return pName ? std::string(pName) : std::string("<unnamed>");
-    };
-    auto logFixVector = [&](const char* prefix, const FrameEngine_Common_FixVector3_Fix64_Fields& pos) {
+    auto logFixVector = [](const char* prefix, const FrameEngine_Common_FixVector3_Fix64_Fields& pos) {
         LOG(LOG_LEVEL_INFO,
             "%s raw=(%lld,%lld,%lld) approx=(%.3f,%.3f,%.3f)",
             prefix,
             static_cast<long long>(pos.x.rawValue),
             static_cast<long long>(pos.y.rawValue),
             static_cast<long long>(pos.z.rawValue),
-            fix64ToDouble(pos.x.rawValue),
-            fix64ToDouble(pos.y.rawValue),
-            fix64ToDouble(pos.z.rawValue));
+            static_cast<double>(pos.x.rawValue) / 65536.0,
+            static_cast<double>(pos.y.rawValue) / 65536.0,
+            static_cast<double>(pos.z.rawValue) / 65536.0);
     };
-    auto logUnityVector = [&](const char* prefix, const UnityVector3& pos) {
-        LOG(LOG_LEVEL_INFO,
-            "%s xyz=(%.3f,%.3f,%.3f)",
-            prefix,
-            pos.x,
-            pos.y,
-            pos.z);
+    auto logUnityVector = [](const char* prefix, const UnityVector3& pos) {
+        LOG(LOG_LEVEL_INFO, "%s xyz=(%.3f,%.3f,%.3f)", prefix, pos.x, pos.y, pos.z);
     };
 
-    using FixGameObjectVisiGetPositionFn = UnityVector3(*)(void*);
-    using BattleActorVisiBoolFn = bool(*)(void*);
+    // ── 1. 获取小地图图标字典 ──
+    auto* pMiniIconsDictionary = getMiniIconsDictionary();
+    if (!pMiniIconsDictionary) return nullptr;
 
-    static FixGameObjectVisiGetPositionFn s_fixGameObjectVisiGetPosition = nullptr;
-    static BattleActorVisiBoolFn s_battleActorVisiIsNeutralEye = nullptr;
-    static BattleActorVisiBoolFn s_battleActorVisiIsSummonedWards = nullptr;
+    // ── 2. 初始化 Dictionary 迭代元数据（缓存） ──
+    static uint32_t s_dictCountOffset = INVALID_OFFSET;
+    static uint32_t s_dictEntriesOffset = INVALID_OFFSET;
+    static uint32_t s_entryHashCodeOffset = INVALID_OFFSET;
+    static uint32_t s_entryValueOffset = INVALID_OFFSET;
+    static size_t   s_entryStride = 0;
 
-    if (!s_fixGameObjectVisiGetPosition) {
-        s_fixGameObjectVisiGetPosition = reinterpret_cast<FixGameObjectVisiGetPositionFn>(m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so",
-                "Assembly-CSharp.dll",
-                "FixGameObjectVisi",
-                "FrameEngine.Visual.FixGameObjectVisi",
-                "GetPosition"));
+    if (s_dictCountOffset == INVALID_OFFSET) {
+        auto* dictKlass = GetObjectKlass(pMiniIconsDictionary);
+        s_dictCountOffset = GetFieldOffsetFromKlass(dictKlass, "count");
+        s_dictEntriesOffset = GetFieldOffsetFromKlass(dictKlass, "entries");
+        LOG(LOG_LEVEL_INFO, "[MiniMap] Dict offsets: count=%u entries=%u",
+            s_dictCountOffset, s_dictEntriesOffset);
     }
-    if (!s_battleActorVisiIsNeutralEye) {
-        s_battleActorVisiIsNeutralEye = reinterpret_cast<BattleActorVisiBoolFn>(m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so",
-                "Assembly-CSharp.dll",
-                "BattleActorVisi",
-                "FrameEngine.Visual.BattleActorVisi",
-                "IsNeutralEye"));
-    }
-    if (!s_battleActorVisiIsSummonedWards) {
-        s_battleActorVisiIsSummonedWards = reinterpret_cast<BattleActorVisiBoolFn>(m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so",
-                "Assembly-CSharp.dll",
-                "BattleActorVisi",
-                "FrameEngine.Visual.BattleActorVisi",
-                "IsSummonedWards"));
-    }
-
-    auto tryInvokeGetPosition = [&](void* pObject,
-                                    UnityVector3& outPos) -> bool {
-        if (pObject == nullptr || s_fixGameObjectVisiGetPosition == nullptr) return false;
-        outPos = s_fixGameObjectVisiGetPosition(pObject);
-        return true;
-    };
-
-    auto* _entityCtrl = (void*)m_pfunctionInfo->GetStaticMember(
-            "ilbil2cpp.so", "Assembly-CSharp.dll",
-            "UIMainBattleMiniMapCtrl", "UIMainBattleMiniMapCtrl",
-            "_entityCtrl");
-    if (_entityCtrl == nullptr) {
+    if (s_dictCountOffset == INVALID_OFFSET || s_dictEntriesOffset == INVALID_OFFSET) {
+        LOG(LOG_LEVEL_ERROR, "[MiniMap] 无法获取 Dictionary 字段偏移");
         return nullptr;
     }
 
-    uint32_t miniMapIconCtrlOffset = GetFieldOffset(
-            "Assembly-CSharp.dll", "MiniMapEntityCtrl", "MiniMapEntityCtrl", "miniMapIconCtrl");
-    if (miniMapIconCtrlOffset == INVALID_OFFSET) {
-        return nullptr;
-    }
-    void* miniMapIconCtrl = ReadMemberPtr(_entityCtrl, miniMapIconCtrlOffset);
-    if (miniMapIconCtrl == nullptr) {
-        return nullptr;
+    int32_t dictCount = ReadMemberValue<int32_t>(pMiniIconsDictionary, s_dictCountOffset);
+    void* entriesArray = ReadMemberPtr(pMiniIconsDictionary, s_dictEntriesOffset);
+    if (!entriesArray) return nullptr;
+
+    if (s_entryStride == 0) {
+        auto* arrKlass = GetObjectKlass(entriesArray);
+        auto* arrRKlass = reinterpret_cast<::Il2CppClass*>(arrKlass);
+        auto* arrType = m_pfunctionInfo->il2cpp_class_get_type(arrRKlass);
+        auto* elemRKlass = m_pfunctionInfo->il2cpp_type_get_class_or_element_class(arrType);
+        auto* elemKlass = reinterpret_cast<Il2CppClass*>(elemRKlass);
+
+        uint32_t rawHashCodeOff = GetFieldOffsetFromKlass(elemKlass, "hashCode");
+        uint32_t rawValueOff    = GetFieldOffsetFromKlass(elemKlass, "value");
+
+        int32_t instSize    = m_pfunctionInfo->il2cpp_class_instance_size(elemRKlass);
+        bool    isValueType = m_pfunctionInfo->il2cpp_class_is_valuetype(elemRKlass);
+        s_entryStride = isValueType ? (size_t)(instSize - 0x10) : (size_t)instSize;
+
+        if (isValueType) {
+            s_entryHashCodeOffset = rawHashCodeOff - 0x10;
+            s_entryValueOffset    = rawValueOff - 0x10;
+        } else {
+            s_entryHashCodeOffset = rawHashCodeOff;
+            s_entryValueOffset    = rawValueOff;
+        }
+
+        LOG(LOG_LEVEL_INFO, "[MiniMap] Entry stride=%zu hashCodeOff=%u valueOff=%u (raw: %u, %u)",
+            s_entryStride, s_entryHashCodeOffset, s_entryValueOffset,
+            rawHashCodeOff, rawValueOff);
     }
 
-    uint32_t miniIconsOffset = GetFieldOffset(
-            "Assembly-CSharp.dll", "UIMiniMapIconCtrl", "UIMiniMapIconCtrl", "miniIcons");
-    if (miniIconsOffset == INVALID_OFFSET) {
-        return nullptr;
-    }
-    auto* pMiniIconsDictionary = static_cast<System_Collections_Generic_Dictionary_TKey_TValue_o*>(ReadMemberPtr(
-            miniMapIconCtrl, miniIconsOffset));
-    if (pMiniIconsDictionary == nullptr || pMiniIconsDictionary->fields.entries == nullptr) {
-        return nullptr;
+    // ── 3. 缓存 UIMiniIconBaseCtrl 字段偏移 ──
+    static uint32_t s_cacheFollowPosOffset = INVALID_OFFSET;
+    if (s_cacheFollowPosOffset == INVALID_OFFSET) {
+        s_cacheFollowPosOffset = GetFieldOffset(
+                "Assembly-CSharp.dll", "UIMiniIconBaseCtrl", "UIMiniIconBaseCtrl", "cacheFollowPos");
     }
 
-    for (int i = 0; i < pMiniIconsDictionary->fields.count; i++) {
-        auto* pArray = pMiniIconsDictionary->fields.entries;
-        auto& pData = pArray->m_Items[i];
+    typedef void* (*pGetActor)(void*);
+    static pGetActor s_getActor = nullptr;
+    if (!s_getActor) {
+        s_getActor = (pGetActor)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "UIMiniIconBaseCtrl", "UIMiniIconBaseCtrl", "get_actor");
+    }
 
-        if (pData.fields.hashCode < 0) continue;
+    // ── 4. 遍历字典条目 ──
+    constexpr size_t kArrayHeaderSize = 0x20;
 
-        auto* baseCtrl = pData.fields.value;
-        if (baseCtrl == nullptr) continue;
+    for (int i = 0; i < dictCount; i++) {
+        uint8_t* entryBase = reinterpret_cast<uint8_t*>(entriesArray) + kArrayHeaderSize + i * s_entryStride;
+
+        int32_t hashCode = *reinterpret_cast<int32_t*>(entryBase + s_entryHashCodeOffset);
+        if (hashCode < 0) continue;
+
+        void* baseCtrl = *reinterpret_cast<void**>(entryBase + s_entryValueOffset);
+        if (!baseCtrl) continue;
 
         const int32_t iconType = get_MiniIconBaseCtrlType(baseCtrl);
-        auto* pIconCtrl = static_cast<UIMiniIconBaseCtrl_o*>(baseCtrl);
+        void* actor = s_getActor ? s_getActor(baseCtrl) : nullptr;
 
-        typedef FrameEngine_Visual_BattleActorVisi_o* (*pBattleActorVisi_get_actor)(UIMiniIconBaseCtrl_o*_pthis);
-        pBattleActorVisi_get_actor BattleActorVisi_get_actor = nullptr;
-        if(BattleActorVisi_get_actor == nullptr) {
-            BattleActorVisi_get_actor = (pBattleActorVisi_get_actor) m_pfunctionInfo->GetMethodFun(
-                    "ilbil2cpp.so",
-                    "Assembly-CSharp.dll",
-                    "UIMiniIconBaseCtrl",
-                    "UIMiniIconBaseCtrl",
-                    "get_actor");
+        FrameEngine_Common_FixVector3_Fix64_Fields cacheFollowPos{};
+        if (s_cacheFollowPosOffset != INVALID_OFFSET) {
+            cacheFollowPos = ReadMemberValue<FrameEngine_Common_FixVector3_Fix64_Fields>(baseCtrl, s_cacheFollowPosOffset);
         }
 
-        auto* actor = BattleActorVisi_get_actor(pIconCtrl);
-        auto* followObj = pIconCtrl->fields.followObj;
-        const auto& cacheFollowPos = pIconCtrl->fields.cacheFollowPos;
-        const std::string baseCtrlTypeName = getManagedTypeName(baseCtrl);
-        const std::string actorTypeName = getManagedTypeName(actor);
-
+        // ── 获取世界坐标 ──
         UnityVector3 worldPos{};
-        const bool hasWorldPos = tryInvokeGetPosition(actor, worldPos)
-                                 || tryInvokeGetPosition(followObj, worldPos);
+        const bool hasWorldPos = getIconWorldPos(baseCtrl, actor, &worldPos);
 
-        bool isWardLike = (MiniMapIconType)iconType == MiniMapIconType_MyTeamWard;
-        if (actor != nullptr) {
-            const bool isNeutralEye = s_battleActorVisiIsNeutralEye && s_battleActorVisiIsNeutralEye(actor);
-            const bool isSummonedWards = s_battleActorVisiIsSummonedWards && s_battleActorVisiIsSummonedWards(actor);
-            isWardLike = isWardLike || isNeutralEye || isSummonedWards;
-        }
-        if (baseCtrlTypeName.find("Ward") != std::string::npos ||
-            baseCtrlTypeName.find("Eye") != std::string::npos ||
-            actorTypeName.find("Ward") != std::string::npos ||
-            actorTypeName.find("Eye") != std::string::npos) {
-            isWardLike = true;
-        }
-
+        // ── 敌方英雄：输出坐标 + 读取 HP ──
         if ((MiniMapIconType)iconType == MiniMapIconType_EnemyTeamHero) {
-            logFixVector("[MiniMap][EnemyHero] cacheFollowPos", cacheFollowPos);
-            if (hasWorldPos) {
-                logUnityVector("[MiniMap][EnemyHero] worldPos", worldPos);
-            }
+            auto pAttribute = getActorAttribute(actor);
+            uint32_t heroLevel = readEnemyHeroLeve(pAttribute);
 
+            float curHp = 0.0f, maxHp = 0.0f;
+            readEnemyHeroHP(pAttribute, &curHp, &maxHp);
 
-            typedef FrameEngine_Logic_BattleActor_o* (*pBattleActor_get_actor)(FrameEngine_Visual_BattleActorVisi_o*_pthis);
-            static pBattleActor_get_actor BattleActor_get_actor = nullptr;
-            if(BattleActor_get_actor == nullptr) {
-                BattleActor_get_actor = (pBattleActor_get_actor) m_pfunctionInfo->GetMethodFun(
-                        "ilbil2cpp.so",
-                        "Assembly-CSharp.dll",
-                        "BattleActorVisi",
-                        "FrameEngine.Visual.BattleActorVisi",
-                        "get_actor");
-            }
-            LOG(LOG_LEVEL_INFO,"[MiniMap][HP]BattleActor_get_actor: %p ",BattleActor_get_actor);
-            auto pBattleActoractor = BattleActor_get_actor(actor);
+            LOG(LOG_LEVEL_INFO, "[MiniMap][EnemyHero] 英雄等级：%u HP=%.1f/%.1f xyz=(%.3f,%.3f,%.3f)",heroLevel, curHp, maxHp, worldPos.x, worldPos.y, worldPos.z);
 
-            typedef FrameEngine_Logic_ActorComponentAttribute_o* (*pActorComponentAttribute_get_attribute)(FrameEngine_Logic_BattleActor_o*_pthis);
-            static pActorComponentAttribute_get_attribute ActorComponentAttribute_get_attribute = nullptr;
-            if(ActorComponentAttribute_get_attribute == nullptr) {
-                ActorComponentAttribute_get_attribute = (pActorComponentAttribute_get_attribute) m_pfunctionInfo->GetMethodFun(
-                        "ilbil2cpp.so",
-                        "Assembly-CSharp.dll",
-                        "BattleActor",
-                        "FrameEngine.Logic.BattleActor",
-                        "get_attribute");
-            }
-            LOG(LOG_LEVEL_INFO,"[MiniMap][HP]ActorComponentAttribute_get_attribute: %p ",ActorComponentAttribute_get_attribute);
-            auto pActorComponentAttribute = ActorComponentAttribute_get_attribute(pBattleActoractor);
-
-            LOG(LOG_LEVEL_INFO,"[MiniMap][HP]pBattleActoractor: %p pActorComponentAttribute:%p",pBattleActoractor,pActorComponentAttribute);
-
-                if (pActorComponentAttribute) {
-                    auto* pLayoutDumpStaticFields = GetLayoutDumpStaticFields();
-                    if (pLayoutDumpStaticFields == nullptr) {
-                        LOG(LOG_LEVEL_ERROR, "[MiniMap][HP] LayoutDump static_fields is null");
-                        continue;
-                    }
-
-                    uint32_t ActorComponentAttribute_curHP_offset =
-                            pLayoutDumpStaticFields->FrameEngine_Logic_ActorComponentAttribute_curHP_offset;
-                    LOG(LOG_LEVEL_INFO,"[MiniMap][HP]ActorComponentAttribute_curHP_offset: %d",ActorComponentAttribute_curHP_offset);
-
-                    uint64_t value = *(uint64_t *) (
-                            pActorComponentAttribute->fields.__InstanceLongValue + ActorComponentAttribute_curHP_offset);
-                    float d = DecoderFix64(value);
-                    LOG(LOG_LEVEL_INFO, "[MiniMap][HP]敌方血量信息: %f", d);
-                }
 
             continue;
         }
 
-        if (isWardLike) {
+        // ── 眼/守卫类：输出坐标 ──
+        const std::string baseCtrlTypeName = getManagedTypeName(baseCtrl);
+        const std::string actorTypeName    = getManagedTypeName(actor);
+
+        if (isWardLikeIcon(iconType, actor, baseCtrlTypeName, actorTypeName)) {
             logFixVector("[MiniMap][WardLike] cacheFollowPos", cacheFollowPos);
             if (hasWorldPos) {
                 logUnityVector("[MiniMap][WardLike] worldPos", worldPos);

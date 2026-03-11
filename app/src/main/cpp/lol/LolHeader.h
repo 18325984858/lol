@@ -955,6 +955,33 @@ namespace lol{
         struct System_Collections_Generic_Dictionary_System_Int64_System_Object_o* NativeMap; // 0x0
         struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x8
     };
+
+
+    struct FrameEngine_DataShellList_T1_T2_T3_T4_Fields {
+        void* Instance; // 0x0
+        int64_t InstanceLongValue; // 0x0
+        struct FrameEngine_LGameVector_T1_o* list; // 0x0
+    };
+    struct FrameEngine_DataShellList_T1_T2_T3_T4_VTable {
+        VirtualInvokeData _0_dummy;
+    };
+    struct FrameEngine_DataShellList_T1_T2_T3_T4_c {
+        Il2CppClass_1 _1;
+        struct FrameEngine_DataShellList_T1_T2_T3_T4_StaticFields* static_fields;
+        Il2CppRGCTXData* rgctx_data;
+        Il2CppClass_2 _2;
+        FrameEngine_DataShellList_T1_T2_T3_T4_VTable vtable;
+    };
+    struct FrameEngine_DataShellList_T1_T2_T3_T4_o {
+        FrameEngine_DataShellList_T1_T2_T3_T4_c *klass;
+        void *monitor;
+        FrameEngine_DataShellList_T1_T2_T3_T4_Fields fields;
+    };
+    struct FrameEngine_DataShellList_T1_T2_T3_T4_StaticFields {
+        struct System_Collections_Generic_Dictionary_System_Int64_System_Object_o* NativeMap; // 0x0
+        struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x0
+    };
+
 };
 
 #endif //DOBBY_PROJECT_LOLHEADER_H

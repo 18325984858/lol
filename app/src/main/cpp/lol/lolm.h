@@ -22,8 +22,13 @@
 struct Il2CppGlobalMetadataHeader;
 
 namespace lol {
-    struct FrameEngine_Common_LayoutDump_c;
-    struct FrameEngine_Common_LayoutDump_StaticFields;
+
+    /** @brief Unity 世界坐标 (float x, y, z) */
+    struct UnityVector3 {
+        float x;
+        float y;
+        float z;
+    };
 
     /**
      * @struct  LolStrStruct
@@ -75,8 +80,127 @@ namespace lol {
 
     public:
         float DecoderFix64(uint64_t value);
-        FrameEngine_Common_LayoutDump_c* GetLayoutDumpClass();
-        FrameEngine_Common_LayoutDump_StaticFields* GetLayoutDumpStaticFields();
+
+        // ========================= MiniMap 拆分函数 =========================//
+
+        /**
+         * @brief  获取 IL2CPP 托管对象的完整类型名（Namespace.ClassName）
+         * @param  pObject  托管对象指针
+         * @return 类型名字符串，对象为空返回 "<null>"
+         */
+        std::string getManagedTypeName(void* pObject);
+
+        /**
+         * @brief  获取小地图图标字典 (miniIcons Dictionary)
+         * @return Dictionary 对象指针，失败返回 nullptr
+         *
+         * @details 链路: UIMainBattleMiniMapCtrl._entityCtrl
+         *          → MiniMapEntityCtrl.miniMapIconCtrl
+         *          → UIMiniMapIconCtrl.miniIcons
+         */
+        void* getMiniIconsDictionary();
+
+        /**
+         * @brief  尝试通过 FixGameObjectVisi::GetPosition 获取世界坐标
+         * @param  pObject  FixGameObjectVisi 或其子类的对象指针
+         * @param  outPos   [传出] 获取到的世界坐标
+         * @return 成功返回 true
+         */
+        bool tryGetWorldPosition(void* pObject, UnityVector3& outPos);
+
+        /**
+         * @brief  获取小地图图标的世界坐标
+         * @param  baseCtrl  UIMiniIconBaseCtrl 对象指针
+         * @param  actor     BattleActorVisi 对象指针（可为 nullptr）
+         * @param  outWorldPos [传出] 获取到的世界坐标（可为 nullptr，为空时仅返回是否成功）
+         * @return 成功获取到坐标返回 true，否则返回 false
+         *
+         * @details 优先从 actor 获取坐标，若失败则从 baseCtrl 的 followObj 获取。
+         *          链路: baseCtrl → followObj → tryGetWorldPosition
+         */
+        bool getIconWorldPos(void* baseCtrl, void* actor, UnityVector3* outWorldPos = nullptr);
+
+        /**
+         * @brief  判断小地图图标是否为眼/守卫类
+         * @param  iconType          图标类型枚举值
+         * @param  baseCtrl          UIMiniIconBaseCtrl 对象
+         * @param  actor             BattleActorVisi 对象（可为 nullptr）
+         * @param  baseCtrlTypeName  baseCtrl 的类型名
+         * @param  actorTypeName     actor 的类型名
+         * @return true 表示为眼/守卫类图标
+         */
+        bool isWardLikeIcon(int32_t iconType, void* actor,
+                            const std::string& baseCtrlTypeName,
+                            const std::string& actorTypeName);
+
+
+        /**
+         * @brief  读取英雄等级
+         * @param  ActorComponentAttribute  属性组件指针
+         * @return 英雄等级，失败返回 0
+         *
+         * @details 读取 nativeData(+0x18) → heroLevel(+0x78) — RVA 0x8495058
+         */
+        uint32_t readEnemyHeroLeve(void* ActorComponentAttribute);
+
+        /**
+         * @brief  从 BattleActorVisi 获取 ActorComponentAttribute
+         * @param  actorVisi  BattleActorVisi 对象指针
+         * @return ActorComponentAttribute 指针，失败返回 nullptr
+         *
+         * @details 链路: BattleActorVisi → get_actor() → BattleActor
+         *          → get_attribute() → ActorComponentAttribute
+         */
+        void* getActorAttribute(void* actorVisi);
+
+        /**
+         * @brief  读取敌方英雄的 HP 信息并输出日志
+         * @param  actor  BattleActorVisi 对象指针
+         *
+         * @details 链路: BattleActorVisi → get_actor() → BattleActor
+         *          → get_attribute() → ActorComponentAttribute
+         *          → nativeData+0x138 (curHP), GetFixAttrValue(2) (maxHP)
+         */
+        void readEnemyHeroHP(void* actor,float* curHp=nullptr, float* maxHp=nullptr);
+
+        //========================= IL2CPP 动态字段查找 API =========================//
+
+        /**
+         * @brief  获取托管对象的 Il2CppClass 指针（从对象头部 offset 0x00 读取）
+         * @param  pObject  托管对象指针
+         * @return Il2CppClass* 或 nullptr
+         */
+        inline Il2CppClass* GetObjectKlass(void* pObject) {
+            if (!pObject) return nullptr;
+            return reinterpret_cast<Il2CppClass*>(*reinterpret_cast<uint64_t*>(pObject));
+        }
+
+        /**
+         * @brief  从运行时 Il2CppClass（含父类链）动态查找指定字段的偏移量
+         * @param  klass      目标类（运行时 Il2CppClass*）
+         * @param  fieldName  字段名称
+         * @return 字段偏移，查找失败返回 INVALID_OFFSET
+         */
+        uint32_t GetFieldOffsetFromKlass(Il2CppClass* klass, const char* fieldName);
+
+        /**
+         * @brief  从运行时对象（含类层次链）动态查找指定字段的偏移量
+         * @param  pObject    对象指针
+         * @param  fieldName  字段名称
+         * @return 字段偏移，查找失败返回 INVALID_OFFSET
+         */
+        inline uint32_t GetFieldOffsetFromObject(void* pObject, const char* fieldName) {
+            return GetFieldOffsetFromKlass(GetObjectKlass(pObject), fieldName);
+        }
+
+        /**
+         * @brief  从运行时 Il2CppClass 的静态字段中按名称读取 int32_t 值
+         * @param  klass      目标类
+         * @param  fieldName  静态字段名称
+         * @param  outValue   [传出] 读取到的值
+         * @return 成功返回 true，失败返回 false
+         */
+        bool ReadStaticFieldInt32(Il2CppClass* klass, const char* fieldName, int32_t& outValue);
 
     public:
 
