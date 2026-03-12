@@ -116,5 +116,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         AndroidSurfaceImgui/includes
         AndroidSurfaceImgui/third_party
+        AndroidSurfaceImgui/third_party/imgui
 )
 

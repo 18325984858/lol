@@ -16,6 +16,7 @@
 #include <iostream>
 #include <stdint.h>
 #include <map>
+#include <vector>
 #include "LolHeader.h"
 #include "../interface/interface.h"
 
@@ -28,6 +29,37 @@ namespace lol {
         float x;
         float y;
         float z;
+    };
+
+    /** @brief 敌方英雄信息 */
+    struct MiniMapEnemyHeroInfo {
+        int32_t     iconType;       ///< 图标类型 (MiniMapIconType)
+        uint32_t    heroLevel;      ///< 英雄等级
+        float       curHp;          ///< 当前血量
+        float       maxHp;          ///< 最大血量
+        UnityVector3 worldPos;      ///< 世界坐标
+        bool        hasWorldPos;    ///< 坐标是否有效
+        int32_t     heroResId;      ///< 英雄配置 ID（_resId）
+        std::string heroName;       ///< 英雄名称（从 BattleActor_DC.name 读取）
+        std::string summonerName;   ///< 召唤师名（BattlePlayer.get_name）
+    };
+
+    /** @brief 眼/守卫信息 */
+    struct MiniMapWardInfo {
+        UnityVector3 worldPos;      ///< 世界坐标
+        bool         hasWorldPos;   ///< 坐标是否有效
+        int32_t      iconType;      ///< 图标类型
+    };
+
+    /** @brief 小地图一次遍历的全部数据快照 */
+    struct MiniMapData {
+        std::vector<MiniMapEnemyHeroInfo> enemyHeroes;  ///< 敌方英雄列表
+        std::vector<MiniMapWardInfo>      wards;        ///< 眼/守卫列表
+
+        void clear() {
+            enemyHeroes.clear();
+            wards.clear();
+        }
     };
 
     /**
@@ -66,19 +98,36 @@ namespace lol {
         /** @brief 析构函数 */
         ~FEVisi();
 
-    private:
-        void* m_il2cppBase; // Store base address
-
     public:
+        /** @brief 遍历小地图图标，收集敌方英雄/眼位数据到 m_miniMapData */
+        void* updateMiniMapData();
+
+        /** @brief 打印 m_miniMapData 中存储的所有数据（调试用） */
+        void printMiniMapData() const;
+
+        /** @brief 获取最近一次 updateMiniMapData() 遍历的小地图数据快照 */
+        const MiniMapData& getMiniMapData() const { return m_miniMapData; }
+
         /** @brief 判断当前是否处于对局（战斗）中 */
         bool get_BattleStarted();
 
         /** @brief 获取所有玩家的队伍管理器对象指针 */
         void* get_battleTeamMgr();
 
+        /**
+         * @brief  验证指针指向的内存页是否可读（不触发 SIGSEGV）
+         * @param  ptr   要验证的指针
+         * @param  size  要读取的字节数
+         * @return true=可读, false=不可读/无效
+         * @details 使用 pipe write 系统调用验证，内核返回 EFAULT 而非 SIGSEGV
+         */
+        static bool IsReadableMemory(const void* ptr, size_t size = sizeof(void*));
+
+    private:
+        void* m_il2cppBase; // Store base address
+
         int32_t get_MiniIconBaseCtrlType(void* pData);
 
-    public:
         float DecoderFix64(uint64_t value);
 
         // ========================= MiniMap 拆分函数 =========================//
@@ -163,6 +212,45 @@ namespace lol {
          */
         void readEnemyHeroHP(void* actor,float* curHp=nullptr, float* maxHp=nullptr);
 
+        /**
+         * @brief  读取英雄配置 ID（_resId）
+         * @param  actorVisi  BattleActorVisi 对象指针
+         * @return 英雄配置 ID，失败返回 0
+         *
+         * @details 链路: BattleActorVisi → _resId(0x150)
+         */
+        int32_t readHeroResId(void* actorVisi);
+
+        /**
+         * @brief  读取英雄名称
+         * @param  actorVisi  BattleActorVisi 对象指针
+         * @return 英雄名称字符串，失败返回空字符串
+         *
+         * @details 链路: BattleActorVisi → dc(0x90) → BattleActor_DC
+         *          → name → Il2CppString → std::string
+         *          优先从 BattleActor_DC.name 读取；若失败则尝试 resId 映射
+         */
+        std::string readHeroName(void* actorVisi);
+
+        /**
+         * @brief  将 IL2CPP 托管 System.String 对象转为 C++ std::string (UTF-8)
+         * @param  pIl2CppString  Il2CppString 对象指针
+         * @return UTF-8 字符串，失败返回空字符串
+         */
+        std::string readIl2CppString(void* pIl2CppString);
+
+        /**
+         * @brief  读取召唤师名（玩家名）
+         * @param  actorVisi  BattleActorVisi 对象指针
+         * @return 召唤师名字符串，失败返回空字符串
+         *
+         * @details 链路: BattleActorVisi → get_player() → BattlePlayer
+         *          → get_name() → Il2CppString → std::string
+         *          get_name 内部: 缓存(this+0xB0), 未命中时通过
+         *          roleId(native+0x148) → BattleContext.GetPlayerNameInBattle
+         */
+        std::string readSummonerName(void* actorVisi);
+
         //========================= IL2CPP 动态字段查找 API =========================//
 
         /**
@@ -202,10 +290,6 @@ namespace lol {
          */
         bool ReadStaticFieldInt32(Il2CppClass* klass, const char* fieldName, int32_t& outValue);
 
-    public:
-
-        void* test();
-        void* test1();
         /**
          * @brief   通过对象基地址 + 偏移读取成员值（模板版本，支持任意类型）
          * @tparam  T       要读取的目标类型（如 int32_t, float, bool, void* 等）
@@ -271,6 +355,7 @@ namespace lol {
         }
     private:
         std::shared_ptr<fun::function> m_pfunctionInfo; ///< 类信息查询接口实例
+        MiniMapData m_miniMapData;                      ///< 小地图遍历数据快照
     };
 
     /**
@@ -298,7 +383,7 @@ namespace lol {
         /** @brief 析构函数 */
         ~lol();
 
-    public:
+    private:
         /**
          * @brief   解密加密字符串
          * @param   Srcstr      加密的原始字符串指针

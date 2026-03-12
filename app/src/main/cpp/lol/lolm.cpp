@@ -7,6 +7,35 @@
 #include "../Log/log.h"
 #include "LolOffset.h"
 #include <cstring>
+#include <unistd.h>
+#include <fcntl.h>
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 安全内存读取 — 通过 pipe write 系统调用验证指针可读性
+// 原理: write() 在内核态拷贝用户内存，地址不可读时返回 EFAULT 而非触发 SIGSEGV
+// ═══════════════════════════════════════════════════════════════════════════════
+bool lol::FEVisi::IsReadableMemory(const void* ptr, size_t size) {
+    if (!ptr) return false;
+
+    static thread_local int s_pipeFd[2] = {-1, -1};
+    if (s_pipeFd[0] == -1) {
+        if (pipe2(s_pipeFd, O_NONBLOCK | O_CLOEXEC) != 0) {
+            return false;
+        }
+    }
+
+    // 排空管道残留数据
+    char drain[128];
+    while (read(s_pipeFd[0], drain, sizeof(drain)) > 0) {}
+
+    // 尝试将 ptr 内存写入管道，若地址不可读内核返回 -1 + errno=EFAULT
+    ssize_t ret = write(s_pipeFd[1], ptr, size);
+    if (ret == (ssize_t)size) {
+        while (read(s_pipeFd[0], drain, sizeof(drain)) > 0) {}
+        return true;
+    }
+    return false;
+}
 
 
 
@@ -439,24 +468,160 @@ void lol::FEVisi::readEnemyHeroHP(void* pAttribute,float* curHp, float* maxHp) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// test() — 小地图主循环（遍历所有图标，处理敌方英雄HP和眼位坐标）
+// 英雄名称读取
+// ═══════════════════════════════════════════════════════════════════════════════
+int32_t lol::FEVisi::readHeroResId(void* actorVisi) {
+    if (!actorVisi) return 0;
+
+    static uint32_t s_resIdOffset = INVALID_OFFSET;
+    if (s_resIdOffset == INVALID_OFFSET) {
+        s_resIdOffset = GetFieldOffset(
+                "Assembly-CSharp.dll", "BattleActorVisi",
+                "FrameEngine.Visual.BattleActorVisi", "_resId");
+        LOG(LOG_LEVEL_INFO, "[HeroName] _resId offset = 0x%X", s_resIdOffset);
+    }
+    if (s_resIdOffset == INVALID_OFFSET) return 0;
+    return ReadMemberValue<int32_t>(actorVisi, s_resIdOffset);
+}
+
+std::string lol::FEVisi::readHeroName(void* actorVisi) {
+    if (!actorVisi) return "";
+
+    // ═══════════════════════════════════════════════════════════════
+    // 英雄名称读取策略（安全版）:
+    //
+    // ⚠ 不直接调用 BattleActorVisi.get_name()，因其内部会触发
+    //   IsHero() → BattleContext.GetPlayerNameInBattle(get_roleId())
+    //   等复杂链路，在注���上下文中调用会导致崩溃。
+    //
+    // 方式1: 直接读取 <name>k__BackingField 缓存字段（安全的内存读取）
+    //        IDA: sub_45704A8 → cached = ActorVisi[45] → offset +0x168
+    // 方式2: 通过 UIHeroUtils.GetHeroName(resId) 回退查询配置表
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── 方式1: 读取 <name>k__BackingField 缓存 ──
+    static uint32_t s_cachedNameOffset = INVALID_OFFSET;
+    static bool s_offsetResolved = false;
+    if (!s_offsetResolved) {
+        s_offsetResolved = true;
+        s_cachedNameOffset = GetFieldOffset(
+                "Assembly-CSharp.dll", "BattleActorVisi",
+                "FrameEngine.Visual.BattleActorVisi", "<name>k__BackingField");
+        if (s_cachedNameOffset == INVALID_OFFSET) {
+            s_cachedNameOffset = 0x168; // IDA 硬编码 fallbackFrameEngine_Visual_BattleActorVisi__get_name
+            LOG(LOG_LEVEL_INFO, "[HeroName] 使用 IDA 硬编���缓存偏移 0x168");
+        } else {
+            LOG(LOG_LEVEL_INFO, "[HeroName] <name>k__BackingField offset = 0x%X", s_cachedNameOffset);
+        }
+    }
+
+    void* pCachedStr = ReadMemberPtr(actorVisi, s_cachedNameOffset);
+    if (pCachedStr) {
+        std::string heroName = m_pfunctionInfo->il2cpp_Il2CppString_toCString(
+                static_cast<const Il2CppString*>(pCachedStr));
+        LOG(LOG_LEVEL_INFO, "[HeroName] 缓存(+0x%X) → \"%s\"", s_cachedNameOffset, heroName.c_str());
+        if (!heroName.empty()) return heroName;
+    }
+
+    // ── 方式2: 回退 UIHeroUtils.GetHeroName(resId) ──
+    int32_t resId = readHeroResId(actorVisi);
+    if (resId <= 0) {
+        LOG(LOG_LEVEL_WARN, "[HeroName] 缓存为空且 resId=%d 无效，无法获取英雄名", resId);
+        return "";
+    }
+
+    typedef void* (*pGetHeroName)(int32_t, void*);
+    static pGetHeroName s_getHeroName = nullptr;
+    static bool s_heroNameResolved = false;
+    if (!s_heroNameResolved) {
+        s_heroNameResolved = true;
+        s_getHeroName = (pGetHeroName)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "UIHeroUtils", "UIHeroUtils",
+                "GetHeroName");
+        LOG(LOG_LEVEL_INFO, "[HeroName] UIHeroUtils.GetHeroName resolved: %p", (void*)s_getHeroName);
+    }
+    if (!s_getHeroName) return "";
+
+    void* pFallbackStr = s_getHeroName(resId, nullptr);
+    if (!pFallbackStr) return "";
+
+    std::string heroName = m_pfunctionInfo->il2cpp_Il2CppString_toCString(
+            static_cast<const Il2CppString*>(pFallbackStr));
+    LOG(LOG_LEVEL_INFO, "[HeroName] UIHeroUtils: resId=%d → \"%s\"", resId, heroName.c_str());
+    return heroName;
+}
+
+std::string lol::FEVisi::readSummonerName(void* actorVisi) {
+    if (!actorVisi) return "";
+
+    // ── 1. BattleActorVisi → get_player() → BattlePlayer ──
+    typedef void* (*pGetPlayer)(void*);
+    static pGetPlayer s_getPlayer = nullptr;
+    if (!s_getPlayer) {
+        s_getPlayer = (pGetPlayer)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
+                "get_player");
+        LOG(LOG_LEVEL_INFO, "[SummonerName] get_player resolved: %p", (void*)s_getPlayer);
+    }
+    if (!s_getPlayer) return "";
+
+    void* pBattlePlayer = s_getPlayer(actorVisi);
+    if (!pBattlePlayer) {
+        LOG(LOG_LEVEL_WARN, "[SummonerName] BattlePlayer 为空");
+        return "";
+    }
+
+    // ── 2. 验证 BattlePlayer 是有效的托管对象 ──
+    auto* klass = GetObjectKlass(pBattlePlayer);
+    if (!klass) {
+        LOG(LOG_LEVEL_WARN, "[SummonerName] BattlePlayer klass 无效");
+        return "";
+    }
+
+    // ── 3. 直接读取已缓存的召唤师名，不调用 get_name() ──
+    //    IDA 反汇编 get_name (0x91E7160):
+    //      LDR X0, [this, #0xB0]       ; 读取缓存
+    //      BL  String::IsNullOrEmpty    ; 检查缓存
+    //      若非空 → 直接返回
+    //      若为空 → 调用 BattleContext.GetPlayerNameInBattle(roleId)（复杂链路，注入上下文不安全）
+    //
+    //    因此我们直接读 this+0xB0, 跳过复杂的 BattleContext 查找链
+
+    // 优先通过运行时反射查找 name 字段的精确偏移
+    static uint32_t s_nameOffset = INVALID_OFFSET;
+    if (s_nameOffset==INVALID_OFFSET) {
+
+        m_pfunctionInfo->GetStaticMember(
+                "ilbil2cpp.so",
+                "Assembly-CSharp.dll",
+                "BattlePlayer",
+                "FrameEngine.Logic.BattlePlayer",
+                "_name",
+                reinterpret_cast<uint32_t *>(&s_nameOffset));
+    }
+
+    void* pNameStr = ReadMemberPtr(pBattlePlayer, s_nameOffset);
+    if (!pNameStr) {
+        LOG(LOG_LEVEL_INFO, "[SummonerName] 名称缓存未填充 (offset=0x%X)", s_nameOffset);
+
+        return "";
+    }
+
+    // ── 4. Il2CppString → std::string (UTF-8) ──
+    return m_pfunctionInfo->il2cpp_Il2CppString_toCString(
+            static_cast<const Il2CppString *>(pNameStr));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// updateMiniMapData() — 小地图主循环（遍历所有图标，收集敌方英雄HP和眼位坐标）
 // ═══════════════════════════════════════════════════════════════════════════════
 
-void *lol::FEVisi::test() {
-    auto logFixVector = [](const char* prefix, const FrameEngine_Common_FixVector3_Fix64_Fields& pos) {
-        LOG(LOG_LEVEL_INFO,
-            "%s raw=(%lld,%lld,%lld) approx=(%.3f,%.3f,%.3f)",
-            prefix,
-            static_cast<long long>(pos.x.rawValue),
-            static_cast<long long>(pos.y.rawValue),
-            static_cast<long long>(pos.z.rawValue),
-            static_cast<double>(pos.x.rawValue) / 65536.0,
-            static_cast<double>(pos.y.rawValue) / 65536.0,
-            static_cast<double>(pos.z.rawValue) / 65536.0);
-    };
-    auto logUnityVector = [](const char* prefix, const UnityVector3& pos) {
-        LOG(LOG_LEVEL_INFO, "%s xyz=(%.3f,%.3f,%.3f)", prefix, pos.x, pos.y, pos.z);
-    };
+void *lol::FEVisi::updateMiniMapData() {
+
+    // ── 清空上一帧数据 ──
+    m_miniMapData.clear();
 
     // ── 1. 获取小地图图标字典 ──
     auto* pMiniIconsDictionary = getMiniIconsDictionary();
@@ -527,11 +692,17 @@ void *lol::FEVisi::test() {
                 "UIMiniIconBaseCtrl", "UIMiniIconBaseCtrl", "get_actor");
     }
 
-    // ── 4. 遍历字典条目 ──
+    // ── 4. 遍历字典条目，收集数据到 m_miniMapData ──
     constexpr size_t kArrayHeaderSize = 0x20;
 
     for (int i = 0; i < dictCount; i++) {
         uint8_t* entryBase = reinterpret_cast<uint8_t*>(entriesArray) + kArrayHeaderSize + i * s_entryStride;
+
+        // ★ 安全检查: entry 内存是否仍可读（游戏结束时 GC 可能已回收）
+        if (!IsReadableMemory(entryBase, s_entryStride)) {
+            LOG(LOG_LEVEL_WARN, "[MiniMap] entry[%d] 内存不可读，对局可能已结束，中止遍历", i);
+            break;
+        }
 
         int32_t hashCode = *reinterpret_cast<int32_t*>(entryBase + s_entryHashCodeOffset);
         if (hashCode < 0) continue;
@@ -539,43 +710,93 @@ void *lol::FEVisi::test() {
         void* baseCtrl = *reinterpret_cast<void**>(entryBase + s_entryValueOffset);
         if (!baseCtrl) continue;
 
+        // ★ 安全检查: baseCtrl 对象头 (klass+monitor) 是否仍可读
+        if (!IsReadableMemory(baseCtrl, 0x10)) {
+            LOG(LOG_LEVEL_WARN, "[MiniMap] baseCtrl[%d] 已失效，跳过", i);
+            continue;
+        }
+
         const int32_t iconType = get_MiniIconBaseCtrlType(baseCtrl);
         void* actor = s_getActor ? s_getActor(baseCtrl) : nullptr;
 
-        FrameEngine_Common_FixVector3_Fix64_Fields cacheFollowPos{};
-        if (s_cacheFollowPosOffset != INVALID_OFFSET) {
-            cacheFollowPos = ReadMemberValue<FrameEngine_Common_FixVector3_Fix64_Fields>(baseCtrl, s_cacheFollowPosOffset);
+        // ★ 安全检查: actor 对象是否仍有效
+        if (actor && !IsReadableMemory(actor, 0x10)) {
+            LOG(LOG_LEVEL_WARN, "[MiniMap] actor[%d] 已失效，跳过", i);
+            actor = nullptr;
         }
 
         // ── 获取世界坐标 ──
         UnityVector3 worldPos{};
         const bool hasWorldPos = getIconWorldPos(baseCtrl, actor, &worldPos);
 
-        // ── 敌方英雄：输出坐标 + 读取 HP ──
-        if ((MiniMapIconType)iconType == MiniMapIconType_EnemyTeamHero) {
+        // ── 敌方英雄：收集 HP / 等级 / 坐标 / 名称 ──
+        if ((MiniMapIconType)iconType == MiniMapIconType_EnemyTeamHero ||
+        (MiniMapIconType)iconType ==MiniMapIconType_MyTeamHero) {
+            MiniMapEnemyHeroInfo info{};
+            info.iconType    = iconType;
             auto pAttribute = getActorAttribute(actor);
-            uint32_t heroLevel = readEnemyHeroLeve(pAttribute);
+            info.heroLevel   = readEnemyHeroLeve(pAttribute);
+            readEnemyHeroHP(pAttribute, &info.curHp, &info.maxHp);
+            info.worldPos    = worldPos;
+            info.hasWorldPos = hasWorldPos;
+            info.heroResId   = readHeroResId(actor);
+            info.heroName    = readHeroName(actor);
+            info.summonerName = readSummonerName(actor);
 
-            float curHp = 0.0f, maxHp = 0.0f;
-            readEnemyHeroHP(pAttribute, &curHp, &maxHp);
+            LOG(LOG_LEVEL_INFO, "[SummonerName] icon: type=%d level=%d HP=%.1f/%.1f pos=(%.1f, %.1f, %.1f) resId=%d name=%s summoner=%s",
+                info.iconType, info.heroLevel, info.curHp, info.maxHp,
+                info.worldPos.x, info.worldPos.y, info.worldPos.z,
+                info.heroResId, info.heroName.c_str(), info.summonerName.c_str());
 
-            LOG(LOG_LEVEL_INFO, "[MiniMap][EnemyHero] 英雄等级：%u HP=%.1f/%.1f xyz=(%.3f,%.3f,%.3f)",heroLevel, curHp, maxHp, worldPos.x, worldPos.y, worldPos.z);
-
-
+            m_miniMapData.enemyHeroes.push_back(info);
             continue;
         }
 
-        // ── 眼/守卫类：输出坐标 ──
+        // ── 眼/守卫类：收集坐标 ──
         const std::string baseCtrlTypeName = getManagedTypeName(baseCtrl);
         const std::string actorTypeName    = getManagedTypeName(actor);
 
         if (isWardLikeIcon(iconType, actor, baseCtrlTypeName, actorTypeName)) {
-            logFixVector("[MiniMap][WardLike] cacheFollowPos", cacheFollowPos);
-            if (hasWorldPos) {
-                logUnityVector("[MiniMap][WardLike] worldPos", worldPos);
-            }
+            MiniMapWardInfo ward{};
+            ward.worldPos    = worldPos;
+            ward.hasWorldPos = hasWorldPos;
+            ward.iconType    = iconType;
+            m_miniMapData.wards.push_back(ward);
         }
     }
 
     return pMiniIconsDictionary;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// printMiniMapData() — 打印 m_miniMapData 中存储的数据快照（调试用）
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void lol::FEVisi::printMiniMapData() const {
+    LOG(LOG_LEVEL_INFO, "[printMiniMapData]╔══════════���═══ MiniMap Data Snapshot ══════════════╗");
+    LOG(LOG_LEVEL_INFO, "[printMiniMapData]║               英雄: %zu  眼/守卫: %zu",
+        m_miniMapData.enemyHeroes.size(), m_miniMapData.wards.size());
+    LOG(LOG_LEVEL_INFO, "[printMiniMapData]╠══════════════ Enemy Heroes ═══════════════════════╣");
+
+    for (size_t i = 0; i < m_miniMapData.enemyHeroes.size(); ++i) {
+        const auto& h = m_miniMapData.enemyHeroes[i];
+        LOG(LOG_LEVEL_INFO,
+            "[printMiniMapData]║ [%zu] type=%d Lv%u  HP=%.1f/%.1f  pos=(%.3f,%.3f,%.3f) valid=%d",
+            i, h.iconType, h.heroLevel, h.curHp, h.maxHp,
+            h.worldPos.x, h.worldPos.y, h.worldPos.z, h.hasWorldPos);
+        LOG(LOG_LEVEL_INFO,
+            "[printMiniMapData]║       resId=%d  hero=%s  summoner=%s",
+            h.heroResId, h.heroName.c_str(), h.summonerName.c_str());
+    }
+
+    LOG(LOG_LEVEL_INFO, "[printMiniMapData]╠══════════════ Wards ══════════════════════════════╣");
+
+    for (size_t i = 0; i < m_miniMapData.wards.size(); ++i) {
+        const auto& w = m_miniMapData.wards[i];
+        LOG(LOG_LEVEL_INFO,
+            "[printMiniMapData]║ [%zu] type=%d  pos=(%.3f,%.3f,%.3f) valid=%d",
+            i, w.iconType, w.worldPos.x, w.worldPos.y, w.worldPos.z, w.hasWorldPos);
+    }
+
+    LOG(LOG_LEVEL_INFO, "╚══════════════════════════════════════════════════╝");
 }
