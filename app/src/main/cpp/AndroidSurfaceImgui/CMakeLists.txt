@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13.0)
+cmake_minimum_required(VERSION 3.14.0)
 
 project(AndroidSurfaceImgui)
 
@@ -12,6 +12,12 @@ add_link_options(-s)
 
 find_library(liblog log NO_CACHE)
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# FreeType 已移除 — 使用 ImGui 内置 stb_truetype 光栅化器
+# 如需恢复 FreeType 支持, 将 freetype 源码放入 third_party/freetype 并
+# 取消下方注释, 同时为所有 target 添加 IMGUI_ENABLE_FREETYPE 定义
+# ═══════════════════════════════════════════════════════════════════════════════
+
 include_directories(
     modules
     includes
@@ -22,7 +28,7 @@ include_directories(
 
 # Scan imgui sources
 aux_source_directory(third_party/imgui AIMGUI_IMGUI_SOURCES)
-# Make imgui backends sources
+# Make imgui backends sources (stb_truetype built-in rasterizer)
 set(
     AIMGUI_IMGUI_BACKENDS_SOURCES
     third_party/imgui/backends/imgui_impl_android.cpp
