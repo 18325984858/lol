@@ -1158,11 +1158,6 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
     try {
 
         if (pli2cppModeBase == nullptr) {
-            // ═══ 独立应用模式 (仅启动器) ═══
-            // Android linker namespace 限制阻止独立应用 dlopen 系统库 (libgui.so),
-            // 因此覆盖层改为在注入的游戏进程中直接创建 (RenderNative 模式).
-            // 独立应用仅负责: 拷贝 SO 文件到游戏目录 + 触发注入.
-            LOG(LOG_LEVEL_INFO, "[MyStartPoint] 独立应用模式 — 仅作为启动器, 覆盖层将在游戏进程中渲染");
             return false;
         }
         else
