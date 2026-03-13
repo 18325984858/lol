@@ -108,6 +108,8 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         dobby_static
         AImGui
         android
+        EGL
+        GLESv3
         log
         ${log-lib}
         ${dl-lib}
@@ -115,6 +117,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         AndroidSurfaceImgui/includes
+        AndroidSurfaceImgui/modules
         AndroidSurfaceImgui/third_party
         AndroidSurfaceImgui/third_party/imgui
 )

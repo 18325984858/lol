@@ -42,6 +42,9 @@ namespace lol {
         int32_t     heroResId;      ///< 英雄配置 ID（_resId）
         std::string heroName;       ///< 英雄名称（从 BattleActor_DC.name 读取）
         std::string summonerName;   ///< 召唤师名（BattlePlayer.get_name）
+        float       screenX;        ///< 屏幕坐标 X（Unity 屏幕空间，原点左下）
+        float       screenY;        ///< 屏幕坐标 Y（Unity 屏幕空间，原点左下）
+        bool        hasScreenPos;   ///< 屏幕坐标是否有效
     };
 
     /** @brief 眼/守卫信息 */
@@ -156,6 +159,18 @@ namespace lol {
          * @return 成功返回 true
          */
         bool tryGetWorldPosition(void* pObject, UnityVector3& outPos);
+
+        /**
+         * @brief  将世界坐标转换为屏幕坐标（通过 Unity Camera.WorldToScreenPoint）
+         * @param  worldPos     世界坐标
+         * @param  outScreenX   [传出] 屏幕 X 坐标（Unity 屏幕空间，原点左下角）
+         * @param  outScreenY   [传出] 屏幕 Y 坐标（Unity 屏幕空间，原点左下角）
+         * @return 成功返回 true，失败（相机不存在/在相机背后）返回 false
+         *
+         * @details 链路: Camera.get_main() → Camera.WorldToScreenPoint(worldPos)
+         *          返回的屏幕坐标 z < 0 表示目标在相机后方，此时返回 false
+         */
+        bool worldToScreen(const UnityVector3& worldPos, float& outScreenX, float& outScreenY);
 
         /**
          * @brief  获取小地图图标的世界坐标

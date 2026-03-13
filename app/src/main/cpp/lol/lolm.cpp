@@ -7,35 +7,10 @@
 #include "../Log/log.h"
 #include "LolOffset.h"
 #include <cstring>
-#include <unistd.h>
-#include <fcntl.h>
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 安全内存读取 — 通过 pipe write 系统调用验证指针可读性
-// 原理: write() 在内核态拷贝用户内存，地址不可读时返回 EFAULT 而非触发 SIGSEGV
-// ═══════════════════════════════════════════════════════════════════════════════
-bool lol::FEVisi::IsReadableMemory(const void* ptr, size_t size) {
-    if (!ptr) return false;
-
-    static thread_local int s_pipeFd[2] = {-1, -1};
-    if (s_pipeFd[0] == -1) {
-        if (pipe2(s_pipeFd, O_NONBLOCK | O_CLOEXEC) != 0) {
-            return false;
-        }
-    }
-
-    // 排空管道残留数据
-    char drain[128];
-    while (read(s_pipeFd[0], drain, sizeof(drain)) > 0) {}
-
-    // 尝试将 ptr 内存写入管道，若地址不可读内核返回 -1 + errno=EFAULT
-    ssize_t ret = write(s_pipeFd[1], ptr, size);
-    if (ret == (ssize_t)size) {
-        while (read(s_pipeFd[0], drain, sizeof(drain)) > 0) {}
-        return true;
-    }
-    return false;
-}
+#include <unistd.h>   // pipe, write, close
+#include <errno.h>
+#include <chrono>
+#include <unordered_map>
 
 
 
@@ -615,6 +590,85 @@ std::string lol::FEVisi::readSummonerName(void* actorVisi) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// worldToScreen() — 世界坐标 → 屏幕坐标（通过 Unity Camera.WorldToScreenPoint）
+//
+// 使用 FindClassByName + GetMethodFunByClass 精确解析 Camera 类方法：
+//   Camera.get_main()              — 0 参数，静态属性 getter
+//   Camera.WorldToScreenPoint(V3)  — 1 参数（仅 Vector3），避免匹配 2 参数重载
+//
+// 返回的屏幕坐标为 Unity 空间（原点左下角，Y 从下到上）。
+// 绘制层（ImGui）需自行翻转 Y。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool lol::FEVisi::worldToScreen(const UnityVector3& worldPos, float& outScreenX, float& outScreenY) {
+
+    // ── 缓存: Camera 类和方法指针 ──
+    using GetMainCameraFn     = void*(*)();
+    using WorldToScreenPointFn = UnityVector3(*)(void*, UnityVector3);
+
+    static bool                  s_resolved       = false;
+    static GetMainCameraFn       s_getMainCamera  = nullptr;
+    static WorldToScreenPointFn  s_w2s            = nullptr;
+
+    if (!s_resolved) {
+        s_resolved = true;
+
+        // 查找 UnityEngine.Camera 类
+        auto* cameraClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "UnityEngine.CoreModule.dll",
+                "Camera", "UnityEngine.Camera");
+
+        if (!cameraClass) {
+            LOG(LOG_LEVEL_ERROR, "[W2S] 无法找到 UnityEngine.Camera 类");
+            return false;
+        }
+
+        // 确保类的方法指针已初始化
+        m_pfunctionInfo->il2cpp_runtime_class_init(cameraClass);
+        m_pfunctionInfo->il2cpp_class_init_all_method(cameraClass);
+
+        // 解析 Camera.get_main (0 参数, 静态 getter)
+        s_getMainCamera = reinterpret_cast<GetMainCameraFn>(
+                m_pfunctionInfo->GetMethodFunByClass(cameraClass, "get_main", 0));
+
+        // 解析 Camera.WorldToScreenPoint (1 参数: Vector3)
+        s_w2s = reinterpret_cast<WorldToScreenPointFn>(
+                m_pfunctionInfo->GetMethodFunByClass(cameraClass, "WorldToScreenPoint", 1));
+
+        LOG(LOG_LEVEL_INFO, "[W2S] Camera class=%p  get_main=%p  WorldToScreenPoint=%p",
+            cameraClass, (void*)s_getMainCamera, (void*)s_w2s);
+    }
+
+    if (!s_getMainCamera || !s_w2s) return false;
+
+    // ── 获取主摄像机 (带帧级缓存, 避免每个英雄都调用 get_main) ──
+    static void* s_cachedCamera = nullptr;
+    static std::chrono::steady_clock::time_point s_cameraTime{};
+    auto now = std::chrono::steady_clock::now();
+    // 每 100ms 刷新一次摄像机指针
+    if (!s_cachedCamera ||
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - s_cameraTime).count() > 100) {
+        s_cachedCamera = s_getMainCamera();
+        s_cameraTime = now;
+    }
+    void* mainCamera = s_cachedCamera;
+    if (!mainCamera || !IsReadableMemory(mainCamera, sizeof(void*))) {
+        s_cachedCamera = nullptr;  // 失效时清空缓存
+        return false;
+    }
+
+    // ── 调用 WorldToScreenPoint ──
+    UnityVector3 screenPos = s_w2s(mainCamera, worldPos);
+
+    // z < 0 表示目标在相机后方，不应绘制
+    if (screenPos.z < 0.0f) return false;
+
+    outScreenX = screenPos.x;
+    outScreenY = screenPos.y;
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // updateMiniMapData() — 小地图主循环（遍历所有图标，收集敌方英雄HP和眼位坐标）
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -698,10 +752,10 @@ void *lol::FEVisi::updateMiniMapData() {
     for (int i = 0; i < dictCount; i++) {
         uint8_t* entryBase = reinterpret_cast<uint8_t*>(entriesArray) + kArrayHeaderSize + i * s_entryStride;
 
-        // ★ 安全检查: entry 内存是否仍可读（游戏结束时 GC 可能已回收）
+        // ── 第2层防御: 验证 entry 内存可读 ──
         if (!IsReadableMemory(entryBase, s_entryStride)) {
-            LOG(LOG_LEVEL_WARN, "[MiniMap] entry[%d] 内存不可读，对局可能已结束，中止遍历", i);
-            break;
+            LOG(LOG_LEVEL_WARN, "[MiniMap] entry[%d] 内存不可读 (%p), 跳过", i, entryBase);
+            continue;
         }
 
         int32_t hashCode = *reinterpret_cast<int32_t*>(entryBase + s_entryHashCodeOffset);
@@ -710,20 +764,14 @@ void *lol::FEVisi::updateMiniMapData() {
         void* baseCtrl = *reinterpret_cast<void**>(entryBase + s_entryValueOffset);
         if (!baseCtrl) continue;
 
-        // ★ 安全检查: baseCtrl 对象头 (klass+monitor) 是否仍可读
-        if (!IsReadableMemory(baseCtrl, 0x10)) {
-            LOG(LOG_LEVEL_WARN, "[MiniMap] baseCtrl[%d] 已失效，跳过", i);
+        // ── 第2层防御: 验证 baseCtrl 对象可读 ──
+        if (!IsReadableMemory(baseCtrl, sizeof(void*))) {
+            LOG(LOG_LEVEL_WARN, "[MiniMap] baseCtrl[%d]=%p 内存不可读, 跳过", i, baseCtrl);
             continue;
         }
 
         const int32_t iconType = get_MiniIconBaseCtrlType(baseCtrl);
         void* actor = s_getActor ? s_getActor(baseCtrl) : nullptr;
-
-        // ★ 安全检查: actor 对象是否仍有效
-        if (actor && !IsReadableMemory(actor, 0x10)) {
-            LOG(LOG_LEVEL_WARN, "[MiniMap] actor[%d] 已失效，跳过", i);
-            actor = nullptr;
-        }
 
         // ── 获取世界坐标 ──
         UnityVector3 worldPos{};
@@ -734,19 +782,57 @@ void *lol::FEVisi::updateMiniMapData() {
         (MiniMapIconType)iconType ==MiniMapIconType_MyTeamHero) {
             MiniMapEnemyHeroInfo info{};
             info.iconType    = iconType;
-            auto pAttribute = getActorAttribute(actor);
-            info.heroLevel   = readEnemyHeroLeve(pAttribute);
-            readEnemyHeroHP(pAttribute, &info.curHp, &info.maxHp);
+
+            // ── 名称缓存 (按 resId) —— 名称在对局中不变, 只查询一次 ──
+            static std::unordered_map<int32_t, std::string> s_heroNameCache;
+            static std::unordered_map<int32_t, std::string> s_summonerNameCache;
+
+            // ── 第2层防御: 验证 actor 可读后再深层访问 ──
+            if (actor && IsReadableMemory(actor, sizeof(void*))) {
+                auto pAttribute = getActorAttribute(actor);
+                if (pAttribute && IsReadableMemory(pAttribute, 0x20)) {
+                    info.heroLevel = readEnemyHeroLeve(pAttribute);
+                    readEnemyHeroHP(pAttribute, &info.curHp, &info.maxHp);
+                }
+                info.heroResId = readHeroResId(actor);
+
+                // 英雄名: 优先从缓存获取, 缓存未命中才调用 IL2CPP
+                if (info.heroResId > 0) {
+                    auto itName = s_heroNameCache.find(info.heroResId);
+                    if (itName != s_heroNameCache.end()) {
+                        info.heroName = itName->second;
+                    } else {
+                        info.heroName = readHeroName(actor);
+                        if (!info.heroName.empty())
+                            s_heroNameCache[info.heroResId] = info.heroName;
+                    }
+
+                    // 召唤师名: 同理
+                    auto itSummoner = s_summonerNameCache.find(info.heroResId);
+                    if (itSummoner != s_summonerNameCache.end()) {
+                        info.summonerName = itSummoner->second;
+                    } else {
+                        info.summonerName = readSummonerName(actor);
+                        if (!info.summonerName.empty())
+                            s_summonerNameCache[info.heroResId] = info.summonerName;
+                    }
+                }
+            }
             info.worldPos    = worldPos;
             info.hasWorldPos = hasWorldPos;
-            info.heroResId   = readHeroResId(actor);
-            info.heroName    = readHeroName(actor);
-            info.summonerName = readSummonerName(actor);
 
-            LOG(LOG_LEVEL_INFO, "[SummonerName] icon: type=%d level=%d HP=%.1f/%.1f pos=(%.1f, %.1f, %.1f) resId=%d name=%s summoner=%s",
-                info.iconType, info.heroLevel, info.curHp, info.maxHp,
-                info.worldPos.x, info.worldPos.y, info.worldPos.z,
-                info.heroResId, info.heroName.c_str(), info.summonerName.c_str());
+            // ── 世界坐标 → 屏幕坐标 (W2S) ──
+            info.hasScreenPos = false;
+            if (hasWorldPos) {
+                float sx = 0.0f, sy = 0.0f;
+                if (worldToScreen(worldPos, sx, sy)) {
+                    info.screenX      = sx;
+                    info.screenY      = sy;
+                    info.hasScreenPos = true;
+                }
+            }
+
+            // (高频采集: 日志由 printMiniMapData 定期输出, 此处不逐帧打印)
 
             m_miniMapData.enemyHeroes.push_back(info);
             continue;
@@ -799,4 +885,48 @@ void lol::FEVisi::printMiniMapData() const {
     }
 
     LOG(LOG_LEVEL_INFO, "╚══════════════════════════════════════════════════╝");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// IsReadableMemory — 第2层防御: 使用 pipe write 验证内存可读性
+//
+// 原理: write() 是系统调用，内核在拷贝用户空间数据时会检查页表：
+//   - 可读页 → write 成功（返回 size）
+//   - 不可读 → write 失败（返回 -1, errno = EFAULT）
+//   - 不会触发 SIGSEGV
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool lol::FEVisi::IsReadableMemory(const void* ptr, size_t size) {
+    if (ptr == nullptr || size == 0) return false;
+
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        // pipe 创建失败，保守返回 false
+        return false;
+    }
+
+    // 尝试将 ptr 指向的数据写入 pipe
+    // 内核会在 copy_from_user 时验证内存可读性
+    ssize_t ret = write(pipefd[1], ptr, size);
+
+    // 立即关闭 pipe（无论成功与否）
+    close(pipefd[0]);
+    close(pipefd[1]);
+
+    // ret == size → 内存可读; ret == -1 && errno == EFAULT → 内存不可读
+    return (ret == (ssize_t)size);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// readIl2CppString — 将 IL2CPP 托管 System.String 对象转为 C++ std::string (UTF-8)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+std::string lol::FEVisi::readIl2CppString(void* pIl2CppString) {
+    if (pIl2CppString == nullptr) return "";
+    if (!IsReadableMemory(pIl2CppString, sizeof(void*))) {
+        LOG(LOG_LEVEL_WARN, "[readIl2CppString] 对象指针 %p 内存不可读", pIl2CppString);
+        return "";
+    }
+    return m_pfunctionInfo->il2cpp_Il2CppString_toCString(
+            static_cast<const Il2CppString*>(pIl2CppString));
 }

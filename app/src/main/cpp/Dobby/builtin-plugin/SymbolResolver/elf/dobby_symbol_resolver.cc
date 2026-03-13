@@ -65,20 +65,32 @@ static void get_syms(ElfW(Ehdr) * header, ElfW(Sym) * *symtab_ptr, char **strtab
   }
 }
 
-int elf_ctx_init(elf_ctx_t *ctx, void *header_) {
+int elf_ctx_init(elf_ctx_t *ctx, void *header_, size_t mapped_size) {
   ElfW(Ehdr) *ehdr = (ElfW(Ehdr) *)header_;
+
+  // Basic ELF validation
+  if (!ehdr || mapped_size < sizeof(ElfW(Ehdr)))
+    return -1;
+  if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0)
+    return -1;
+
   ctx->header = ehdr;
 
   ElfW(Addr) ehdr_addr = (ElfW(Addr))ehdr;
 
-  // Handle dynamic segment
-  {
+  // Validate program header table
+  if (ehdr->e_phoff == 0 || ehdr->e_phnum == 0 ||
+      ehdr->e_phoff + (size_t)ehdr->e_phnum * ehdr->e_phentsize > mapped_size) {
+    // No usable program headers — still try sections below
+  } else {
+    // Handle dynamic segment
     ElfW(Addr) addr = 0;
     ElfW(Dyn) *dyn = NULL;
     ElfW(Phdr) *phdr = reinterpret_cast<ElfW(Phdr) *>(ehdr_addr + ehdr->e_phoff);
     for (size_t i = 0; i < ehdr->e_phnum; i++) {
       if (phdr[i].p_type == PT_DYNAMIC) {
-        dyn = reinterpret_cast<ElfW(Dyn) *>(ehdr_addr + phdr[i].p_offset);
+        if (phdr[i].p_offset < mapped_size)
+          dyn = reinterpret_cast<ElfW(Dyn) *>(ehdr_addr + phdr[i].p_offset);
       } else if (phdr[i].p_type == PT_LOAD) {
         addr = ehdr_addr + phdr[i].p_offset - phdr[i].p_vaddr;
         if (ctx->load_bias == 0)
@@ -87,47 +99,42 @@ int elf_ctx_init(elf_ctx_t *ctx, void *header_) {
         ctx->load_bias = (ElfW(Addr))phdr - phdr[i].p_vaddr;
       }
     }
-//    ctx->load_bias =
-#if 0
-    const char *strtab = nullptr;
-    ElfW(Sym) *symtab  = nullptr;
-    for (ElfW(Dyn) *d = dyn; d->d_tag != DT_NULL; ++d) {
-      if (d->d_tag == DT_STRTAB) {
-        strtab = reinterpret_cast<const char *>(addr + d->d_un.d_ptr);
-      } else if (d->d_tag == DT_SYMTAB) {
-        symtab = reinterpret_cast<ElfW(Sym) *>(addr + d->d_un.d_ptr);
-      }
-    }
-#endif
   }
 
-  // Handle section
-  {
-    ElfW(Shdr) * dynsym_sh, *dynstr_sh;
-    ElfW(Shdr) * sym_sh, *str_sh;
+  // Handle section — validate before any dereference
+  if (ehdr->e_shoff != 0 && ehdr->e_shnum != 0 && ehdr->e_shstrndx < ehdr->e_shnum) {
+    // Verify section header table fits within the mapped region
+    size_t sh_table_end = (size_t)ehdr->e_shoff + (size_t)ehdr->e_shnum * (size_t)ehdr->e_shentsize;
+    if (sh_table_end <= mapped_size) {
+      ElfW(Shdr) *shdr = reinterpret_cast<ElfW(Shdr) *>(ehdr_addr + ehdr->e_shoff);
 
-    ElfW(Shdr) *shdr = reinterpret_cast<ElfW(Shdr) *>(ehdr_addr + ehdr->e_shoff);
+      // Validate section string table entry
+      ElfW(Shdr) *shstr_sh = &shdr[ehdr->e_shstrndx];
+      char *shstrtab = NULL;
+      if (shstr_sh->sh_offset < mapped_size && shstr_sh->sh_offset + shstr_sh->sh_size <= mapped_size) {
+        shstrtab = (char *)((addr_t)ehdr_addr + shstr_sh->sh_offset);
+      }
 
-    ElfW(Shdr) *shstr_sh = NULL;
-    shstr_sh = &shdr[ehdr->e_shstrndx];
-    char *shstrtab = NULL;
-    shstrtab = (char *)((addr_t)ehdr_addr + shstr_sh->sh_offset);
+      for (size_t i = 0; i < ehdr->e_shnum; i++) {
+        // Bounds-check each section's offset
+        if (shdr[i].sh_offset >= mapped_size)
+          continue;
 
-    for (size_t i = 0; i < ehdr->e_shnum; i++) {
-      if (shdr[i].sh_type == SHT_SYMTAB) {
-        sym_sh = &shdr[i];
-        ctx->sym_sh_ = sym_sh;
-        ctx->symtab_ = (ElfW(Sym) *)(ehdr_addr + shdr[i].sh_offset);
-      } else if (shdr[i].sh_type == SHT_STRTAB && strcmp(shstrtab + shdr[i].sh_name, ".strtab") == 0) {
-        str_sh = &shdr[i];
-        ctx->strtab_ = (const char *)(ehdr_addr + shdr[i].sh_offset);
-      } else if (shdr[i].sh_type == SHT_DYNSYM) {
-        dynsym_sh = &shdr[i];
-        ctx->dynsym_sh_ = dynsym_sh;
-        ctx->dynsymtab_ = (ElfW(Sym) *)(ehdr_addr + shdr[i].sh_offset);
-      } else if (shdr[i].sh_type == SHT_STRTAB && strcmp(shstrtab + shdr[i].sh_name, ".dynstr") == 0) {
-        dynstr_sh = &shdr[i];
-        ctx->dynstrtab_ = (const char *)(ehdr_addr + shdr[i].sh_offset);
+        if (shdr[i].sh_type == SHT_SYMTAB) {
+          ctx->sym_sh_ = &shdr[i];
+          ctx->symtab_ = (ElfW(Sym) *)(ehdr_addr + shdr[i].sh_offset);
+        } else if (shdr[i].sh_type == SHT_STRTAB && shstrtab &&
+                   shdr[i].sh_name < shstr_sh->sh_size &&
+                   strcmp(shstrtab + shdr[i].sh_name, ".strtab") == 0) {
+          ctx->strtab_ = (const char *)(ehdr_addr + shdr[i].sh_offset);
+        } else if (shdr[i].sh_type == SHT_DYNSYM) {
+          ctx->dynsym_sh_ = &shdr[i];
+          ctx->dynsymtab_ = (ElfW(Sym) *)(ehdr_addr + shdr[i].sh_offset);
+        } else if (shdr[i].sh_type == SHT_STRTAB && shstrtab &&
+                   shdr[i].sh_name < shstr_sh->sh_size &&
+                   strcmp(shstrtab + shdr[i].sh_name, ".dynstr") == 0) {
+          ctx->dynstrtab_ = (const char *)(ehdr_addr + shdr[i].sh_offset);
+        }
       }
     }
   }
@@ -176,7 +183,7 @@ void *resolve_elf_internal_symbol(const char *library_name, const char *symbol_n
       elf_ctx_t ctx;
       memset(&ctx, 0, sizeof(elf_ctx_t));
       if (file_mem) {
-        elf_ctx_init(&ctx, file_mem);
+        elf_ctx_init(&ctx, file_mem, mmapFileMng.mmap_buffer_size);
         result = elf_ctx_iterate_symbol_table(&ctx, symbol_name);
       }
       if (result)
@@ -196,7 +203,7 @@ void *resolve_elf_internal_symbol(const char *library_name, const char *symbol_n
         elf_ctx_t ctx;
         memset(&ctx, 0, sizeof(elf_ctx_t));
         if (file_mem) {
-          elf_ctx_init(&ctx, file_mem);
+          elf_ctx_init(&ctx, file_mem, mmapFileMng.mmap_buffer_size);
           result = elf_ctx_iterate_symbol_table(&ctx, symbol_name);
         }
 
