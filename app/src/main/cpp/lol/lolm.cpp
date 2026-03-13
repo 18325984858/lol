@@ -775,7 +775,20 @@ void *lol::FEVisi::updateMiniMapData() {
 
         // ── 获取世界坐标 ──
         UnityVector3 worldPos{};
-        const bool hasWorldPos = getIconWorldPos(baseCtrl, actor, &worldPos);
+        bool hasWorldPos = getIconWorldPos(baseCtrl, actor, &worldPos);
+
+        // ── 后备: 从 cacheFollowPos 读取缓存坐标 (自身英雄 actor/followObj 可能为空) ──
+        if (!hasWorldPos && baseCtrl && s_cacheFollowPosOffset != INVALID_OFFSET) {
+            auto* posPtr = reinterpret_cast<UnityVector3*>(
+                    reinterpret_cast<uint8_t*>(baseCtrl) + s_cacheFollowPosOffset);
+            if (IsReadableMemory(posPtr, sizeof(UnityVector3))) {
+                UnityVector3 cached = *posPtr;
+                if (cached.x != 0.0f || cached.z != 0.0f) {
+                    worldPos = cached;
+                    hasWorldPos = true;
+                }
+            }
+        }
 
         // ── 敌方英雄：收集 HP / 等级 / 坐标 / 名称 ──
         if ((MiniMapIconType)iconType == MiniMapIconType_EnemyTeamHero ||
@@ -859,32 +872,32 @@ void *lol::FEVisi::updateMiniMapData() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void lol::FEVisi::printMiniMapData() const {
-    LOG(LOG_LEVEL_INFO, "[printMiniMapData]╔══════════���═══ MiniMap Data Snapshot ══════════════╗");
-    LOG(LOG_LEVEL_INFO, "[printMiniMapData]║               英雄: %zu  眼/守卫: %zu",
+    LOG(LOG_LEVEL_INFO, "[RADAR]╔══════════════ MiniMap Data Snapshot ══════════════╗");
+    LOG(LOG_LEVEL_INFO, "[RADAR]║               英雄: %zu  眼/守卫: %zu",
         m_miniMapData.enemyHeroes.size(), m_miniMapData.wards.size());
-    LOG(LOG_LEVEL_INFO, "[printMiniMapData]╠══════════════ Enemy Heroes ═══════════════════════╣");
+    LOG(LOG_LEVEL_INFO, "[RADAR]╠══════════════ Enemy Heroes ═══════════════════════╣");
 
     for (size_t i = 0; i < m_miniMapData.enemyHeroes.size(); ++i) {
         const auto& h = m_miniMapData.enemyHeroes[i];
         LOG(LOG_LEVEL_INFO,
-            "[printMiniMapData]║ [%zu] type=%d Lv%u  HP=%.1f/%.1f  pos=(%.3f,%.3f,%.3f) valid=%d",
+            "[RADAR]║ [%zu] type=%d Lv%u  HP=%.1f/%.1f  pos=(%.3f,%.3f,%.3f) valid=%d",
             i, h.iconType, h.heroLevel, h.curHp, h.maxHp,
             h.worldPos.x, h.worldPos.y, h.worldPos.z, h.hasWorldPos);
         LOG(LOG_LEVEL_INFO,
-            "[printMiniMapData]║       resId=%d  hero=%s  summoner=%s",
+            "[RADAR]║       resId=%d  hero=%s  summoner=%s",
             h.heroResId, h.heroName.c_str(), h.summonerName.c_str());
     }
 
-    LOG(LOG_LEVEL_INFO, "[printMiniMapData]╠══════════════ Wards ══════════════════════════════╣");
+    LOG(LOG_LEVEL_INFO, "[RADAR]╠══════════════ Wards ══════════════════════════════╣");
 
     for (size_t i = 0; i < m_miniMapData.wards.size(); ++i) {
         const auto& w = m_miniMapData.wards[i];
         LOG(LOG_LEVEL_INFO,
-            "[printMiniMapData]║ [%zu] type=%d  pos=(%.3f,%.3f,%.3f) valid=%d",
+            "[RADAR]║ [%zu] type=%d  pos=(%.3f,%.3f,%.3f) valid=%d",
             i, w.iconType, w.worldPos.x, w.worldPos.y, w.worldPos.z, w.hasWorldPos);
     }
 
-    LOG(LOG_LEVEL_INFO, "╚══════════════════════════════════════════════════╝");
+    LOG(LOG_LEVEL_INFO, "[RADAR]╚══════════════════════════════���═══════════════════╝");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
