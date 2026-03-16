@@ -5,6 +5,7 @@
 #include "start.h"
 #include "./Log/log.h"
 #include "./lol/lolm.h"
+#include "Draw/Draw.h"
 #include <chrono>
 #include <thread>
 #include <csignal>
@@ -19,6 +20,7 @@
 
 // 线程安全游戏数据桥接
 #include "SharedGameData.h"
+#include "lol/SkinChanger.h"
 
 // Dobby — inline hook
 #include "./Dobby/include/dobby.h"
@@ -76,33 +78,7 @@ static void installCrashGuard() {
     });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 小地图坐标映射
-// ═══════════════════════════════════════════════════════════════════════════════
 
-static constexpr float MAP_MIN_X = -50.0f;
-static constexpr float MAP_MAX_X = 50.0f;
-static constexpr float MAP_MIN_Z = -50.0f;
-static constexpr float MAP_MAX_Z = 50.0f;
-
-static ImVec2 WorldToMinimap(const lol::UnityVector3& worldPos,
-                             ImVec2 minimapOrigin, float minimapSize) {
-    float nx = (worldPos.x - MAP_MIN_X) / (MAP_MAX_X - MAP_MIN_X);
-    float nz = 1.0f - (worldPos.z - MAP_MIN_Z) / (MAP_MAX_Z - MAP_MIN_Z);
-    nx = std::clamp(nx, 0.0f, 1.0f);
-    nz = std::clamp(nz, 0.0f, 1.0f);
-    return {minimapOrigin.x + nx * minimapSize,
-            minimapOrigin.y + nz * minimapSize};
-}
-
-/** @brief 将裸 (x,z) 世界坐标转成小地图像素坐标 (全图模式) */
-static ImVec2 XZToMinimap(float wx, float wz,
-                           ImVec2 origin, float size) {
-    float nx = (wx - MAP_MIN_X) / (MAP_MAX_X - MAP_MIN_X);
-    float nz = 1.0f - (wz - MAP_MIN_Z) / (MAP_MAX_Z - MAP_MIN_Z);
-    return {origin.x + std::clamp(nx, 0.f, 1.f) * size,
-            origin.y + std::clamp(nz, 0.f, 1.f) * size};
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 触摸输入 — 读取 /dev/input/event* 原始触摸事件, 喂给 ImGui IO
@@ -136,17 +112,20 @@ namespace touch_input {
     //    2 = ROTATION_180
     //    3 = ROTATION_270 (顺时针90°, 反向横屏)
     //
-    static int s_rotation = -1;
+    static int s_rotation = 3;
 
     /** @brief 循环切换旋转模式 (供 UI 按钮调用) */
-    static void cycleRotation() {
+    void cycleRotation() {
         if (s_rotation < 0) s_rotation = 0;   // 从自动 → 手动0
         else s_rotation = (s_rotation + 1) % 4;
         LOG(LOG_LEVEL_INFO, "[Touch] 旋转模式切换 → %d (0=无, 1=90°, 2=180°, 3=270°)", s_rotation);
     }
 
+    /** @brief 获取当前旋转值 */
+    int getRotation() { return s_rotation; }
+
     /** @brief 获取当前旋转模式描述 */
-    static const char* getRotationLabel() {
+    const char* getRotationLabel() {
         switch (s_rotation) {
             case -1: return "Auto";
             case 0:  return "0";
@@ -249,9 +228,9 @@ namespace touch_input {
                                 bool surfaceLandscape  = (screenW > screenH);
                                 bool digitizerPortrait = (s_absMaxY > s_absMaxX * 1.1f);
                                 if (surfaceLandscape && digitizerPortrait) {
-                                    rot = 3;  // 默认 ROTATION_270 (顺时针横屏)
+                                    rot = 1;  // 默认 ROTATION_90 (逆时针横屏, 最常见)
                                 } else if (!surfaceLandscape && s_absMaxX > s_absMaxY * 1.1f) {
-                                    rot = 3;  // 竖屏surface + 横屏digitizer (罕见, 尝试270°)
+                                    rot = 1;  // 竖屏surface + 横屏digitizer (罕见, 尝试90°)
                                 } else {
                                     rot = 0;  // 方向一致, 无需旋转
                                 }
@@ -298,391 +277,6 @@ namespace touch_input {
     }
 
 } // namespace touch_input
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// DrawGameOverlay — ImGui 覆盖层绘制
-// ═══════════════════════════════════════════════════════════════════════════════
-
-static void DrawGameOverlay(const lol::MiniMapData& data, bool inBattle) {
-
-    // ═══ 1. 状态/信息面板（左上角，按钮折叠） ═══
-    static bool s_panelExpanded = true;   // 面板展开/折叠状态
-
-    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowBgAlpha(0.65f);
-    ImGui::Begin("Game Info", nullptr,
-                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
-
-    // ── 折叠/展开 按钮 (单击即可, 触摸友好) ──
-    if (ImGui::Button(s_panelExpanded ? "[-] Hide" : "[+] Show", ImVec2(120, 0))) {
-        s_panelExpanded = !s_panelExpanded;
-    }
-
-    // ── 触摸旋转切换按钮 (如果自动检测方向不对, 点击切换) ──
-    ImGui::SameLine();
-    {
-        char rotBtn[32];
-        snprintf(rotBtn, sizeof(rotBtn), "Rot:%s", touch_input::getRotationLabel());
-        if (ImGui::Button(rotBtn, ImVec2(100, 0))) {
-            touch_input::cycleRotation();
-        }
-    }
-
-    if (!inBattle) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[Waiting]");
-        ImGui::End();
-        return;
-    }
-
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "IN BATTLE");
-
-    if (s_panelExpanded) {
-        ImGui::Separator();
-
-        // ── 敌方英雄信息 (可折叠) ──
-        if (ImGui::CollapsingHeader("Enemy Heroes", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Text("Count: %d", (int)data.enemyHeroes.size());
-            ImGui::Spacing();
-
-            for (size_t i = 0; i < data.enemyHeroes.size(); i++) {
-                const auto& hero = data.enemyHeroes[i];
-                ImGui::PushID((int)i);
-
-                const char* name = hero.heroName.empty() ? "Unknown" : hero.heroName.c_str();
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                                   "[Lv.%u] %s", hero.heroLevel, name);
-
-                if (!hero.summonerName.empty()) {
-                    ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                                       "(%s)", hero.summonerName.c_str());
-                }
-
-                float hpRatio = (hero.maxHp > 0.0f) ? (hero.curHp / hero.maxHp) : 0.0f;
-                hpRatio = std::clamp(hpRatio, 0.0f, 1.0f);
-                ImVec4 hpColor = (hpRatio > 0.5f)  ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f) :
-                                 (hpRatio > 0.25f) ? ImVec4(0.9f, 0.9f, 0.2f, 1.0f) :
-                                                      ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
-                char hpOverlay[64];
-                snprintf(hpOverlay, sizeof(hpOverlay), "%.0f / %.0f", hero.curHp, hero.maxHp);
-
-                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, hpColor);
-                ImGui::ProgressBar(hpRatio, ImVec2(280, 0), hpOverlay);
-                ImGui::PopStyleColor();
-
-                if (hero.hasWorldPos) {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-                                       "  Pos: (%.0f, %.0f, %.0f)",
-                                       hero.worldPos.x, hero.worldPos.y, hero.worldPos.z);
-                }
-
-                ImGui::Separator();
-                ImGui::PopID();
-            }
-        }
-
-        // ── 眼位信息 (可折叠) ──
-        if (!data.wards.empty()) {
-            if (ImGui::CollapsingHeader("Wards", ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::Text("Count: %d", (int)data.wards.size());
-                for (size_t i = 0; i < data.wards.size(); i++) {
-                    const auto& ward = data.wards[i];
-                    if (ward.hasWorldPos) {
-                        ImGui::Text("  Ward#%d (%.0f, %.0f) type=%d",
-                                    (int)(i + 1),
-                                    ward.worldPos.x, ward.worldPos.z,
-                                    ward.iconType);
-                    }
-                }
-            }
-        }
-    } // end s_panelExpanded
-
-    ImGui::End();
-
-
-    // ═══ 2. ESP 方框覆盖层（World-to-Screen 屏幕投影） ═══
-    {
-        ImGuiIO& espIo = ImGui::GetIO();
-        const float screenW = espIo.DisplaySize.x;
-        const float screenH = espIo.DisplaySize.y;
-
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2(screenW, screenH));
-        ImGui::Begin("##ESP", nullptr,
-                     ImGuiWindowFlags_NoTitleBar |
-                     ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoScrollbar |
-                     ImGuiWindowFlags_NoInputs |
-                     ImGuiWindowFlags_NoBackground |
-                     ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-        ImDrawList* espDraw = ImGui::GetWindowDrawList();
-
-        for (const auto& hero : data.enemyHeroes) {
-            if (!hero.hasScreenPos) continue;
-
-            float sx = hero.screenX;
-            float sy = screenH - hero.screenY;
-
-            constexpr float kMargin = 100.0f;
-            if (sx < -kMargin || sx > screenW + kMargin ||
-                sy < -kMargin || sy > screenH + kMargin)
-                continue;
-
-            const float boxW = 60.0f;
-            const float boxH = 120.0f;
-            ImVec2 boxMin(sx - boxW * 0.5f, sy - boxH * 0.8f);
-            ImVec2 boxMax(sx + boxW * 0.5f, sy + boxH * 0.2f);
-
-            float hpRatio = (hero.maxHp > 0.0f) ? (hero.curHp / hero.maxHp) : 0.0f;
-            hpRatio = std::clamp(hpRatio, 0.0f, 1.0f);
-            ImU32 boxColor = (hpRatio > 0.5f)  ? IM_COL32(0, 255, 0, 220) :
-                             (hpRatio > 0.25f) ? IM_COL32(255, 255, 0, 220) :
-                                                  IM_COL32(255, 0, 0, 220);
-
-            espDraw->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 40));
-            espDraw->AddRect(boxMin, boxMax, boxColor, 0.0f, 0, 2.0f);
-
-            const float hpBarH = 4.0f;
-            const float hpBarY = boxMin.y - hpBarH - 2.0f;
-            ImVec2 hpBgMin(boxMin.x, hpBarY);
-            ImVec2 hpBgMax(boxMax.x, hpBarY + hpBarH);
-            ImVec2 hpFgMax(boxMin.x + (boxMax.x - boxMin.x) * hpRatio, hpBarY + hpBarH);
-            espDraw->AddRectFilled(hpBgMin, hpBgMax, IM_COL32(0, 0, 0, 160));
-            espDraw->AddRectFilled(hpBgMin, hpFgMax, boxColor);
-
-            const char* name = hero.heroName.empty() ? nullptr : hero.heroName.c_str();
-            if (name) {
-                ImVec2 textSize = ImGui::CalcTextSize(name);
-                float textX = sx - textSize.x * 0.5f;
-                float textY = hpBarY - textSize.y - 1.0f;
-                espDraw->AddText(ImVec2(textX + 1, textY + 1), IM_COL32(0, 0, 0, 200), name);
-                espDraw->AddText(ImVec2(textX, textY), IM_COL32(255, 255, 255, 240), name);
-            }
-
-            char lvlBuf[16];
-            snprintf(lvlBuf, sizeof(lvlBuf), "Lv%u", hero.heroLevel);
-            espDraw->AddText(ImVec2(boxMax.x + 2, boxMin.y),
-                             IM_COL32(255, 255, 100, 240), lvlBuf);
-
-            char hpBuf[32];
-            snprintf(hpBuf, sizeof(hpBuf), "%.0f/%.0f", hero.curHp, hero.maxHp);
-            ImVec2 hpTextSize = ImGui::CalcTextSize(hpBuf);
-            espDraw->AddText(ImVec2(sx - hpTextSize.x * 0.5f, boxMax.y + 2),
-                             IM_COL32(200, 200, 200, 220), hpBuf);
-        }
-
-        ImGui::End();
-    }
-
-    // ═══ 3. 小地图雷达（全图视野, 显示所有玩家） ═══
-    {
-        ImGuiIO& io = ImGui::GetIO();
-        // 小地图边长 = 屏幕短边 × 比例系数 (0.30 = 30%)
-        // 调大此值可放大小地图, 例如 0.40f=40%, 0.50f=50%
-        const float radarSize = std::min(io.DisplaySize.x, io.DisplaySize.y) * 0.35f;
-        const float margin = 10.0f;   // 雷达窗口距屏幕边缘的间距 (像素)
-        const float winPad = 6.0f;    // 雷达窗口内边距 (像素)
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-
-        float winSize = radarSize + winPad * 2;
-        ImGui::SetNextWindowPos(
-            ImVec2(io.DisplaySize.x - winSize - margin,
-                   io.DisplaySize.y - winSize - margin),
-            ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(winSize, winSize), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowBgAlpha(0.0f);
-        ImGui::Begin("## Radar", nullptr,
-                     ImGuiWindowFlags_NoTitleBar |
-                     ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoScrollbar);
-
-        ImVec2 O = ImGui::GetCursorScreenPos();
-        ImVec2 E(O.x + radarSize, O.y + radarSize);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-
-        // 快捷宏: 全图世界坐标 → 雷达像素
-        #define M(wx,wz) XZToMinimap(wx, wz, O, radarSize)
-
-        // ── 裁剪区域 ──
-        dl->PushClipRect(O, E, true);
-
-        // ── 地图底色 (透明) ──
-        dl->AddRectFilled(O, E, IM_COL32(0, 0, 0, 0));
-
-        // ── 河道 (蓝色斜带) ──
-        {
-            float rw = radarSize * 0.04f;
-            ImVec2 r1 = M(2000, 12600), r2 = M(12600, 2000);
-            dl->AddLine(r1, r2, IM_COL32(30, 50, 90, 180), rw);
-            dl->AddLine(r1, r2, IM_COL32(50, 80, 140, 60), rw * 0.5f);
-        }
-
-        // ── 三条路线 (土黄色路径) ──
-        {
-            ImU32 laneCol = IM_COL32(80, 70, 45, 150);
-            float lw = radarSize * 0.02f;
-            dl->AddLine(M(1200,1200), M(1200,13400), laneCol, lw);
-            dl->AddLine(M(1200,13400), M(13400,13400), laneCol, lw);
-            dl->AddLine(M(1200,1200), M(13400,1200), laneCol, lw);
-            dl->AddLine(M(13400,1200), M(13400,13400), laneCol, lw);
-            dl->AddLine(M(2000,2000), M(12600,12600), laneCol, lw);
-        }
-
-        // ── 草丛 (浅绿小块) ──
-        {
-            ImU32 bushCol = IM_COL32(35, 65, 30, 200);
-            float bs = radarSize * 0.02f;
-            auto bush = [&](float wx, float wz) {
-                ImVec2 c = M(wx, wz);
-                dl->AddRectFilled(ImVec2(c.x-bs, c.y-bs*0.6f),
-                                  ImVec2(c.x+bs, c.y+bs*0.6f), bushCol, bs*0.3f);
-            };
-            bush(3500,10500); bush(4500,9500); bush(10500,5000); bush(9500,4500);
-            bush(6000,8500);  bush(8500,6000); bush(3000,3000);  bush(11500,11500);
-        }
-
-        // ── 基地 (蓝/红) ──
-        {
-            float baseR = radarSize * 0.025f;
-            ImVec2 bb = M(500, 500), rb = M(14100, 14100);
-            dl->AddCircleFilled(bb, baseR, IM_COL32(30,100,220,180), 16);
-            dl->AddCircle(bb, baseR, IM_COL32(60,140,255,220), 16, 1.5f);
-            dl->AddCircleFilled(rb, baseR, IM_COL32(200,40,40,180), 16);
-            dl->AddCircle(rb, baseR, IM_COL32(255,80,80,220), 16, 1.5f);
-        }
-
-        // ── 大龙/小龙 ──
-        {
-            float pitR = radarSize * 0.012f;
-            ImVec2 baron = M(4200, 10200);
-            dl->AddCircle(baron, pitR, IM_COL32(180,50,200,180), 12, 1.5f);
-            dl->AddText(ImVec2(baron.x-3, baron.y-4), IM_COL32(200,100,220,200), "B");
-            ImVec2 dragon = M(10200, 4200);
-            dl->AddCircle(dragon, pitR, IM_COL32(220,160,30,180), 12, 1.5f);
-            dl->AddText(ImVec2(dragon.x-3, dragon.y-4), IM_COL32(230,180,50,200), "D");
-        }
-
-        // ── 防御塔 (小方块) ──
-        {
-            float tw = radarSize * 0.006f;
-            auto tower = [&](float wx, float wz, ImU32 col) {
-                ImVec2 c = M(wx, wz);
-                dl->AddRectFilled(ImVec2(c.x-tw,c.y-tw), ImVec2(c.x+tw,c.y+tw), col);
-            };
-            ImU32 bT = IM_COL32(60,140,255,200), rT = IM_COL32(255,80,80,200);
-            tower(1200,5500,bT); tower(3500,3500,bT); tower(5500,1200,bT);
-            tower(13400,9000,rT); tower(11000,11000,rT); tower(9000,13400,rT);
-        }
-
-        // ── 边框 ──
-        dl->AddRect(O, E, IM_COL32(80,120,80,250), 0.0f, 0, 2.0f);
-
-        // ── 动画脉冲 ──
-        timespec ts_r{};
-        clock_gettime(CLOCK_MONOTONIC, &ts_r);
-        float anim = (float)ts_r.tv_sec + (float)ts_r.tv_nsec / 1e9f;
-        float pulse = (std::sin(anim * 3.0f) + 1.0f) * 0.5f;
-
-        // 英雄圆点半径 (缩小以避免重叠)
-        const float heroR = std::max(radarSize * 0.018f, 3.0f);
-        const float wardR = std::max(radarSize * 0.012f, 2.0f);
-
-        // ── 绘制所有英雄 ──
-        for (const auto& hero : data.enemyHeroes) {
-            if (!hero.hasWorldPos) continue;
-            ImVec2 p = WorldToMinimap(hero.worldPos, O, radarSize);
-
-            const bool isMyTeam = (hero.iconType == 1);  // MiniMapIconType_MyTeamHero
-
-            if (isMyTeam) {
-                // ── 己方英雄: 绿色圆 + 脉冲 ──
-                float oR = heroR * (1.4f + 0.25f * pulse);
-                dl->AddCircle(p, oR, IM_COL32(80, 220, 80, (int)(40 + 30 * pulse)), 0, 1.0f);
-                dl->AddCircleFilled(p, heroR, IM_COL32(30, 200, 30, 180), 16);
-                dl->AddCircle(p, heroR, IM_COL32(60, 255, 60, 240), 16, 1.5f);
-
-                // 等级 (右上角, 小字)
-                char lv[8]; snprintf(lv, sizeof(lv), "%u", hero.heroLevel);
-                dl->AddText(ImVec2(p.x + heroR + 1, p.y - heroR - 2),
-                            IM_COL32(100, 255, 100, 230), lv);
-            } else {
-                // ── 敌方英雄: 根据 HP 变色的圆 ──
-                float hp = (hero.maxHp > 0) ? std::clamp(hero.curHp / hero.maxHp, 0.f, 1.f) : 0.f;
-                float cr = (hp > 0.5f) ? (1.f - hp) * 2.f : 1.f;
-                float cg = (hp > 0.5f) ? 1.f : hp * 2.f;
-                ImU32 col  = IM_COL32((int)(cr * 255), (int)(cg * 255), 40, 255);
-                ImU32 fill = IM_COL32((int)(cr * 255), (int)(cg * 255), 40, 120);
-
-                // 脉冲外圈
-                float oR = heroR * (1.4f + 0.25f * pulse);
-                dl->AddCircle(p, oR, IM_COL32((int)(cr * 255), (int)(cg * 255), 40,
-                              (int)(30 + 25 * pulse)), 0, 1.0f);
-
-                // 实心圆
-                dl->AddCircleFilled(p, heroR, fill, 16);
-                dl->AddCircle(p, heroR, col, 16, 1.5f);
-
-                // 小 HP 条 (紧贴圆点下方, 窄)
-                if (hero.maxHp > 0) {
-                    float bw = heroR * 2.f;
-                    float bh = std::max(1.5f, heroR * 0.2f);
-                    float bx = p.x - heroR;
-                    float by = p.y + heroR + 1.f;
-                    dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh),
-                                      IM_COL32(0, 0, 0, 140));
-                    dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * hp, by + bh), col);
-                }
-
-                // 等级 (右上角, 小字)
-                char lv[8]; snprintf(lv, sizeof(lv), "%u", hero.heroLevel);
-                dl->AddText(ImVec2(p.x + heroR + 1, p.y - heroR - 2),
-                            IM_COL32(255, 255, 100, 220), lv);
-            }
-
-
-            // ── [DEBUG] 在每个英雄旁显示真实世界坐标 ──
-            {
-                char coordBuf[48];
-                snprintf(coordBuf, sizeof(coordBuf), "(%.0f,%.0f)",
-                         hero.worldPos.x, hero.worldPos.z);
-                ImU32 dbgCol = isMyTeam ? IM_COL32(150, 255, 150, 255)
-                                        : IM_COL32(255, 200, 150, 255);
-                dl->AddText(ImVec2(p.x - 20, p.y + heroR + 6),
-                            IM_COL32(0, 0, 0, 200), coordBuf);
-                dl->AddText(ImVec2(p.x - 21, p.y + heroR + 5), dbgCol, coordBuf);
-            }
-
-        }
-
-        // ── 眼位 (蓝色小菱形) ──
-        for (const auto& ward : data.wards) {
-            if (!ward.hasWorldPos) continue;
-            ImVec2 p = WorldToMinimap(ward.worldPos, O, radarSize);
-            dl->AddCircleFilled(p, wardR, IM_COL32(50, 150, 255, 100));
-            dl->AddCircle(p, wardR, IM_COL32(100, 200, 255, 220), 0, 1.0f);
-            float s = wardR * 0.5f;
-            dl->AddQuadFilled(ImVec2(p.x, p.y - s), ImVec2(p.x + s, p.y),
-                              ImVec2(p.x, p.y + s), ImVec2(p.x - s, p.y),
-                              IM_COL32(120, 210, 255, 240));
-        }
-
-        // ── 恢复裁剪 ──
-        dl->PopClipRect();
-
-        #undef M
-
-        ImGui::Dummy(ImVec2(radarSize, radarSize));
-        ImGui::End();
-        ImGui::PopStyleVar(2);
-    }
-}
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -887,9 +481,10 @@ namespace egl_hook {
             ImGui::NewFrame();
 
             static lol::MiniMapData gameData;
+            static draw::GameOverlay overlay;
             SharedGameData::getInstance().pullData(gameData);
             bool inBattle = SharedGameData::getInstance().isBattleActive();
-            DrawGameOverlay(gameData, inBattle);
+            overlay.drawOverlay(gameData, inBattle);
 
             // 触摸调试: 红色圆点跟随手指 (确认触摸是否生效)
             touch_input::drawDebugIndicator();
@@ -964,6 +559,9 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
     lol::lol lol(pli2cppModeBase, pCodeRegistration,
                  pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
     LOG(LOG_LEVEL_INFO, "[TestFunction] 游戏数据采集初始化完成 ✓");
+
+    // ── 安装换肤 Hook ──
+    SkinChanger::getInstance().install(lol.getIl2cppBase());
 
     constexpr int kCollectMs = 50;
     constexpr int kPrintMs   = 5000;

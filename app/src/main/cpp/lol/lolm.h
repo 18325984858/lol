@@ -114,6 +114,9 @@ namespace lol {
         /** @brief 判断当前是否处于对局（战斗）中 */
         bool get_BattleStarted();
 
+        /** @brief 获取 il2cpp 基地址 */
+        void* getIl2cppBase() const { return m_il2cppBase; }
+
         /** @brief 获取所有玩家的队伍管理器对象指针 */
         void* get_battleTeamMgr();
 

@@ -90,12 +90,14 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         # List C/C++ source files with relative paths to this CMakeLists.txt.
         native-lib.cpp
         start.cpp
+        "Draw/Draw.cpp"
         "Log/log.cpp"
         "Symbol/Symbol.cpp"
         "File/file.cpp"
         "UnityApi/unityapi.cpp"
         "li2cppDumper/li2cppdumper.cpp"
         "lol/lolm.cpp"
+        "lol/SkinChanger.cpp"
         "interface/interface.cpp"
         "il2cppHeader/il2cppHeader.cpp"
 )

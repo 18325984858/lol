@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <chrono>
 #include <unordered_map>
+#include <sys/mman.h>  // mprotect
 
 
 
@@ -138,6 +139,33 @@ lol::lol::lol(void* dqil2cppBase,void *pCodeRegistration,
 
     if(pGlobalMetadataHeader) {
         this->inItStringindexTable(static_cast<const Il2CppGlobalMetadataHeader *>(pGlobalMetadataHeader));
+    }
+
+
+    //此处补丁是为了将游戏模式设置成
+    // ── Patch: dqil2cppBase + 0xB69B494 ──
+    // 原始指令: F3 03 01 2A (mov w19, w1)
+    // 目标指令: 73 00 80 52 (mov w19, #3)
+    {
+        uint8_t* patchAddr = reinterpret_cast<uint8_t*>(dqil2cppBase) + 0xB69B494;
+        const uint8_t original[] = {0xF3, 0x03, 0x01, 0x2A};
+        const uint8_t patched[]  = {0x93, 0x00, 0x80, 0x52};
+
+        if (memcmp(patchAddr, original, sizeof(original)) == 0) {
+            size_t pageSize = sysconf(_SC_PAGESIZE);
+            uintptr_t pageStart = reinterpret_cast<uintptr_t>(patchAddr) & ~(pageSize - 1);
+            if (mprotect(reinterpret_cast<void*>(pageStart), pageSize * 2, PROT_READ | PROT_WRITE | PROT_EXEC) == 0) {
+                memcpy(patchAddr, patched, sizeof(patched));
+                __builtin___clear_cache(reinterpret_cast<char*>(patchAddr),
+                                        reinterpret_cast<char*>(patchAddr + sizeof(patched)));
+                LOG(LOG_LEVEL_INFO, "[Patch] 0xB69B494 patch 成功: F3 03 01 2A (MOV W19, W1) → 93 00 80 52 (MOV W19, #4)");
+            } else {
+                LOG(LOG_LEVEL_ERROR, "[Patch] mprotect 失败: %s", strerror(errno));
+            }
+        } else {
+            LOG(LOG_LEVEL_WARN, "[Patch] 0xB69B494 原始字节不匹配, 跳过 (当前: %02X %02X %02X %02X)",
+                patchAddr[0], patchAddr[1], patchAddr[2], patchAddr[3]);
+        }
     }
 
     LOG(LOG_LEVEL_INFO,"[DumpStr] lol Init Success! ");
