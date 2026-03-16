@@ -3,7 +3,6 @@
 
 #include <imgui/imgui.h>
 #include "../lol/lolm.h"
-#include "../lol/SkinChanger.h"
 
 // touch_input 中供绘制使用的函数 (实现在 start.cpp)
 namespace touch_input {
@@ -27,8 +26,6 @@ namespace draw {
         bool m_enableHeroInfo = false;
         bool m_enableWards   = false;
         int  m_radarRotation = 0;
-        int  m_skinIdInput   = 0;
-        int  m_selectedSkinIdx = -1;   // 皮肤列表中的选中索引
 
         // 小地图坐标映射
         static ImVec2 worldToMinimap(const lol::UnityVector3& worldPos,

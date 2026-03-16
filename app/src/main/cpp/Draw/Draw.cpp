@@ -170,87 +170,6 @@ void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
                 }
             }
         }
-
-        // ── 换肤 ──
-        if (ImGui::CollapsingHeader("Skin Changer")) {
-            auto& sc = SkinChanger::getInstance();
-
-            if (!sc.isInstalled()) {
-                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "Hook not installed");
-            } else {
-                // 皮肤列表
-                if (sc.hasSkinList()) {
-                    auto skinList = sc.getSkinList();
-                    ImGui::Text("Skins: %d", (int)skinList.size());
-                    ImGui::Separator();
-
-                    // 默认皮肤按钮 (重置)
-                    bool isDefault = (!sc.isEnabled() || sc.getTargetSkinId() <= 0);
-                    if (isDefault) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-                    }
-                    if (ImGui::Button("Default Skin", ImVec2(-1, 0))) {
-                        sc.applySkin(-1);
-                        m_selectedSkinIdx = -1;
-                        m_skinIdInput = 0;
-                    }
-                    if (isDefault) {
-                        ImGui::PopStyleColor();
-                    }
-
-                    // 遍历所有皮肤按钮
-                    int curSkinId = sc.getTargetSkinId();
-                    for (int i = 0; i < (int)skinList.size(); i++) {
-                        const auto& skin = skinList[i];
-                        char label[128];
-                        snprintf(label, sizeof(label), "[%d] %s", skin.skinId, skin.name.c_str());
-
-                        bool isActive = sc.isEnabled() && (curSkinId == skin.skinId);
-                        if (isActive) {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
-                        }
-
-                        if (ImGui::Button(label, ImVec2(-1, 0))) {
-                            sc.applySkin(skin.skinId);
-                            m_selectedSkinIdx = i;
-                            m_skinIdInput = skin.skinId;
-                        }
-
-                        if (isActive) {
-                            ImGui::PopStyleColor();
-                        }
-                    }
-                } else {
-                    ImGui::TextColored(ImVec4(1, 1, 0.3f, 1), "Waiting for skin data...");
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1),
-                        "Enter battle to load skin list");
-                }
-
-                // 手动输入 (备用)
-                ImGui::Separator();
-                ImGui::Text("Manual ID:");
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(100);
-                ImGui::InputInt("##skinId", &m_skinIdInput, 1, 10);
-                ImGui::SameLine();
-                if (ImGui::Button("Apply##skin")) {
-                    if (m_skinIdInput > 0) {
-                        sc.applySkin(m_skinIdInput);
-                    }
-                }
-
-                // 状态显示
-                ImGui::Separator();
-                if (sc.isEnabled() && sc.getTargetSkinId() > 0) {
-                    ImGui::TextColored(ImVec4(0.2f, 1, 0.2f, 1),
-                        "Active: SkinID = %d", sc.getTargetSkinId());
-                } else {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1),
-                        "Inactive (default)");
-                }
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.5f, 1), "* Client-side only");
-            }
-        }
     }
 
     ImGui::End();
@@ -341,7 +260,7 @@ void GameOverlay::drawESP(const lol::MiniMapData& data) {
 
 void GameOverlay::drawRadar(const lol::MiniMapData& data) {
     ImGuiIO& io = ImGui::GetIO();
-    const float radarSize = std::min(io.DisplaySize.x, io.DisplaySize.y) * 0.35f;
+    const float radarSize = std::min(io.DisplaySize.x, io.DisplaySize.y) * 0.30f;//设置雷达的尺寸为屏幕较小边的30%
     const float margin = 10.0f;
     const float winPad = 6.0f;
 
@@ -365,7 +284,7 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
 
     // ── 左侧按钮栏 (竖向排列) ──
     {
-        float btnH = radarSize * 0.14f;
+        float btnH = radarSize * 0.15f; //设置按钮高度为雷达尺寸的15%
 
         // Rot 按钮
         const char* radarRotLabels[] = {"0", "90", "180", "270"};

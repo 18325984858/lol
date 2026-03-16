@@ -97,7 +97,6 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         "UnityApi/unityapi.cpp"
         "li2cppDumper/li2cppdumper.cpp"
         "lol/lolm.cpp"
-        "lol/SkinChanger.cpp"
         "interface/interface.cpp"
         "il2cppHeader/il2cppHeader.cpp"
 )

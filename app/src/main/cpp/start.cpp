@@ -20,7 +20,6 @@
 
 // 线程安全游戏数据桥接
 #include "SharedGameData.h"
-#include "lol/SkinChanger.h"
 
 // Dobby — inline hook
 #include "./Dobby/include/dobby.h"
@@ -559,9 +558,6 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
     lol::lol lol(pli2cppModeBase, pCodeRegistration,
                  pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
     LOG(LOG_LEVEL_INFO, "[TestFunction] 游戏数据采集初始化完成 ✓");
-
-    // ── 安装换肤 Hook ──
-    SkinChanger::getInstance().install(lol.getIl2cppBase());
 
     constexpr int kCollectMs = 50;
     constexpr int kPrintMs   = 5000;
