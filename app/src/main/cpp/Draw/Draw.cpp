@@ -260,7 +260,7 @@ void GameOverlay::drawESP(const lol::MiniMapData& data) {
 
 void GameOverlay::drawRadar(const lol::MiniMapData& data) {
     ImGuiIO& io = ImGui::GetIO();
-    const float radarSize = std::min(io.DisplaySize.x, io.DisplaySize.y) * 0.30f;//设置雷达的尺寸为屏幕较小边的30%
+    const float radarSize = std::min(io.DisplaySize.x, io.DisplaySize.y) * 0.35f;//设置雷达的尺寸为屏幕较小边的30%
     const float margin = 10.0f;
     const float winPad = 6.0f;
 

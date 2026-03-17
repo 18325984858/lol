@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-setlocal
+setlocal EnableDelayedExpansion
 
 :: ============================================================
 ::  Dobby Project - 编译 & 安装 & 运行 脚本
@@ -70,11 +70,11 @@ goto :eof
 :install_only
 echo [1/1] 安装到设备...
 "%ADB%" %ADB_DEVICE% install -r "%APK_PATH%"
-if %errorlevel% neq 0 (
+if errorlevel 1 (
     echo [提示] 签名不匹配, 尝试卸载后重新安装...
     "%ADB%" %ADB_DEVICE% uninstall %PACKAGE%
     "%ADB%" %ADB_DEVICE% install "%APK_PATH%"
-    if %errorlevel% neq 0 (echo [错误] 安装失败 & exit /b 1)
+    if !errorlevel! neq 0 (echo [错误] 安装失败 & exit /b 1)
 )
 echo [完成] 安装成功
 goto :eof
@@ -100,11 +100,11 @@ echo.
 
 echo [2/3] 安装到设备...
 "%ADB%" %ADB_DEVICE% install -r "%APK_PATH%"
-if %errorlevel% neq 0 (
+if errorlevel 1 (
     echo [提示] 签名不匹配, 尝试卸载后重新安装...
     "%ADB%" %ADB_DEVICE% uninstall %PACKAGE%
     "%ADB%" %ADB_DEVICE% install "%APK_PATH%"
-    if %errorlevel% neq 0 (echo [错误] 安装失败 & exit /b 1)
+    if !errorlevel! neq 0 (echo [错误] 安装失败 & exit /b 1)
 )
 echo [2/3] 安装成功
 echo.

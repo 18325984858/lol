@@ -572,7 +572,7 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
             if (crashSig != 0) {
                 LOG(LOG_LEVEL_ERROR, "[TestFunction] ⚠ 捕获信号 %d，跳过本次采集", crashSig);
                 t_guardActive = 0;
-                SharedGameData::getInstance().setBattleActive(false);
+                // 崩溃时不改变状态，保留上一帧数据，避免闪烁
             } else {
                 t_guardActive = 1;
                 bool isBattle = lol.get_BattleStarted();
