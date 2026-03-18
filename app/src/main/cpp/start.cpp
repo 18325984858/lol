@@ -14,6 +14,7 @@
 #include <mutex>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <cerrno>
 #include <dlfcn.h>
@@ -91,6 +92,8 @@ static void installCrashGuard() {
 namespace touch_input {
 
     static int   s_fd       = -2;     // -2=未初始化/重试中, -1=永久失败, >=0=有效
+    static char  s_devPath[64] = {0};
+    static char  s_devName[128] = {0};
     static float s_absMaxX  = 1.0f;   // 数字化仪 X 轴最大值 (物理竖屏坐标系)
     static float s_absMaxY  = 1.0f;   // 数字化仪 Y 轴最大值
     static float s_rawX     = -1.0f;  // 归一化原始触摸坐标 (0..1, 数字化仪坐标系)
@@ -100,6 +103,7 @@ namespace touch_input {
     static bool  s_touching = false;
     static int   s_retryCount = 0;
     static std::chrono::steady_clock::time_point s_lastRetry{};
+    static bool  s_loggedOpenPermissionError = false;
 
     // ── 触摸坐标旋转模式 ──
     //
@@ -135,6 +139,138 @@ namespace touch_input {
         }
     }
 
+    int getFd() { return s_fd; }
+    const char* getDevicePath() { return s_devPath[0] ? s_devPath : "<none>"; }
+    const char* getDeviceName() { return s_devName[0] ? s_devName : "<unknown>"; }
+    float getRawX() { return s_rawX; }
+    float getRawY() { return s_rawY; }
+    float getCurX() { return s_curX; }
+    float getCurY() { return s_curY; }
+    bool isTouching() { return s_touching; }
+
+    struct TouchDeviceCandidate {
+        int fd = -1;
+        int score = -1;
+        bool hasMt = false;
+        bool hasSingleTouch = false;
+        bool hasBtnTouch = false;
+        bool hasDirect = false;
+        float absMaxX = 1.0f;
+        float absMaxY = 1.0f;
+        char path[64] = {0};
+        char name[128] = {0};
+    };
+
+    static void toLowerCopy(const char* src, char* dst, size_t dstSize) {
+        if (!dst || dstSize == 0) return;
+        dst[0] = '\0';
+        if (!src) return;
+        size_t i = 0;
+        for (; src[i] != '\0' && i + 1 < dstSize; ++i) {
+            dst[i] = (char)std::tolower((unsigned char)src[i]);
+        }
+        dst[i] = '\0';
+    }
+
+    static bool containsKeyword(const char* text, const char* keyword) {
+        return text && keyword && std::strstr(text, keyword) != nullptr;
+    }
+
+    static bool buildTouchDeviceCandidate(const char* path, TouchDeviceCandidate& out) {
+        int fd = open(path, O_RDONLY | O_NONBLOCK);
+        if (fd < 0) {
+            if (!s_loggedOpenPermissionError && (errno == EACCES || errno == EPERM)) {
+                s_loggedOpenPermissionError = true;
+                LOG(LOG_LEVEL_WARN,
+                    "[Touch] 无法打开 %s: errno=%d (%s). 通常是 /dev/input/event* 权限不足, 执行: adb shell su -c \"chmod 666 /dev/input/event*\"",
+                    path, errno, strerror(errno));
+            }
+            return false;
+        }
+
+        constexpr size_t kBitsPerLong = sizeof(unsigned long) * 8;
+        constexpr auto bitArrayWords = [](size_t maxBit) constexpr {
+            return (maxBit / kBitsPerLong) + 1;
+        };
+        auto hasBit = [&](const unsigned long* bits, size_t bit) -> bool {
+            return ((bits[bit / kBitsPerLong] >> (bit % kBitsPerLong)) & 1UL) != 0;
+        };
+
+        unsigned long evBits[bitArrayWords(EV_MAX)] = {};
+        unsigned long absBits[bitArrayWords(ABS_MAX)] = {};
+        unsigned long keyBits[bitArrayWords(KEY_MAX)] = {};
+        unsigned long propBits[bitArrayWords(INPUT_PROP_MAX)] = {};
+        if (ioctl(fd, EVIOCGBIT(0, sizeof(evBits)), evBits) < 0 ||
+            ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(absBits)), absBits) < 0) {
+            close(fd);
+            return false;
+        }
+
+        ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), keyBits);
+        ioctl(fd, EVIOCGPROP(sizeof(propBits)), propBits);
+
+        char devName[128] = {0};
+        ioctl(fd, EVIOCGNAME(sizeof(devName)), devName);
+
+        bool hasMtX = hasBit(absBits, ABS_MT_POSITION_X);
+        bool hasMtY = hasBit(absBits, ABS_MT_POSITION_Y);
+        bool hasAbsX = hasBit(absBits, ABS_X);
+        bool hasAbsY = hasBit(absBits, ABS_Y);
+        bool hasBtnTouch = hasBit(keyBits, BTN_TOUCH);
+        bool hasDirect = hasBit(propBits, INPUT_PROP_DIRECT);
+
+        if ((!hasMtX || !hasMtY) && (!hasAbsX || !hasAbsY)) {
+            close(fd);
+            return false;
+        }
+
+        struct input_absinfo absX{}, absY{};
+        int absCodeX = (hasMtX && hasMtY) ? ABS_MT_POSITION_X : ABS_X;
+        int absCodeY = (hasMtX && hasMtY) ? ABS_MT_POSITION_Y : ABS_Y;
+        if (ioctl(fd, EVIOCGABS(absCodeX), &absX) < 0 ||
+            ioctl(fd, EVIOCGABS(absCodeY), &absY) < 0) {
+            close(fd);
+            return false;
+        }
+
+        char nameLower[128] = {0};
+        toLowerCopy(devName, nameLower, sizeof(nameLower));
+
+        int score = 0;
+        if (hasMtX && hasMtY) score += 40;
+        if (hasAbsX && hasAbsY) score += 10;
+        if (hasBtnTouch) score += 20;
+        if (hasDirect) score += 25;
+        if (containsKeyword(nameLower, "touchscreen")) score += 80;
+        if (containsKeyword(nameLower, "touch screen")) score += 80;
+        if (containsKeyword(nameLower, "touch panel")) score += 70;
+        if (containsKeyword(nameLower, "touchpanel")) score += 70;
+        if (containsKeyword(nameLower, "_ts") || containsKeyword(nameLower, " ts")) score += 45;
+        if (containsKeyword(nameLower, "sec_touchscreen")) score += 80;
+        if (containsKeyword(nameLower, "fts") || containsKeyword(nameLower, "goodix") ||
+            containsKeyword(nameLower, "synaptics") || containsKeyword(nameLower, "focaltech") ||
+            containsKeyword(nameLower, "elan") || containsKeyword(nameLower, "novatek")) {
+            score += 35;
+        }
+        if (containsKeyword(nameLower, "key") || containsKeyword(nameLower, "keyboard") ||
+            containsKeyword(nameLower, "mouse") || containsKeyword(nameLower, "stylus") ||
+            containsKeyword(nameLower, "fingerprint") || containsKeyword(nameLower, "sensor")) {
+            score -= 40;
+        }
+
+        out.fd = fd;
+        out.score = score;
+        out.hasMt = hasMtX && hasMtY;
+        out.hasSingleTouch = hasAbsX && hasAbsY;
+        out.hasBtnTouch = hasBtnTouch;
+        out.hasDirect = hasDirect;
+        out.absMaxX = absX.maximum > 0 ? (float)absX.maximum : 1.0f;
+        out.absMaxY = absY.maximum > 0 ? (float)absY.maximum : 1.0f;
+        snprintf(out.path, sizeof(out.path), "%s", path);
+        snprintf(out.name, sizeof(out.name), "%s", devName[0] ? devName : "<unnamed>");
+        return true;
+    }
+
     /** @brief 尝试打开触摸设备, 失败则每 5 秒自动重试 */
     static void init() {
         // 已成功打开
@@ -155,30 +291,54 @@ namespace touch_input {
             LOG(LOG_LEVEL_INFO, "[Touch]   adb shell su -c \"chmod 666 /dev/input/event*\"");
         }
 
-        for (int i = 0; i < 10; i++) {
+        TouchDeviceCandidate best{};
+        auto considerPath = [&](const char* path) {
+            TouchDeviceCandidate candidate{};
+            if (!buildTouchDeviceCandidate(path, candidate)) return;
+
+            LOG(LOG_LEVEL_INFO,
+                "[Touch] 候选设备: %s name=%s score=%d mt=%d abs=%d btnTouch=%d direct=%d range=(%.0f,%.0f)",
+                candidate.path, candidate.name, candidate.score,
+                candidate.hasMt ? 1 : 0,
+                candidate.hasSingleTouch ? 1 : 0,
+                candidate.hasBtnTouch ? 1 : 0,
+                candidate.hasDirect ? 1 : 0,
+                candidate.absMaxX, candidate.absMaxY);
+
+            if (best.fd < 0 || candidate.score > best.score) {
+                if (best.fd >= 0) close(best.fd);
+                best = candidate;
+            } else {
+                close(candidate.fd);
+            }
+        };
+
+        for (int i = 0; i < 32; i++) {
             char path[64];
             snprintf(path, sizeof(path), "/dev/input/event%d", i);
+            considerPath(path);
+        }
 
-            int fd = open(path, O_RDONLY | O_NONBLOCK);
-            if (fd < 0) continue;
-
-            unsigned long absBits[(ABS_MAX + 63) / 64] = {};
-            if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(absBits)), absBits) < 0) {
-                close(fd); continue;
+        DIR* dir = opendir("/dev/input");
+        if (dir) {
+            struct dirent* entry = nullptr;
+            while ((entry = readdir(dir)) != nullptr) {
+                if (strncmp(entry->d_name, "event", 5) != 0) continue;
+                char path[128];
+                snprintf(path, sizeof(path), "/dev/input/%s", entry->d_name);
+                considerPath(path);
             }
+            closedir(dir);
+        }
 
-            bool hasMtX = (absBits[ABS_MT_POSITION_X / (sizeof(long) * 8)]
-                           >> (ABS_MT_POSITION_X % (sizeof(long) * 8))) & 1;
-            if (!hasMtX) { close(fd); continue; }
-
-            struct input_absinfo absX{}, absY{};
-            ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &absX);
-            ioctl(fd, EVIOCGABS(ABS_MT_POSITION_Y), &absY);
-            s_absMaxX = absX.maximum > 0 ? (float)absX.maximum : 1.0f;
-            s_absMaxY = absY.maximum > 0 ? (float)absY.maximum : 1.0f;
-
-            s_fd = fd;
-            LOG(LOG_LEVEL_INFO, "[Touch] ✓ 触摸设备就绪: %s (重试 %d 次)", path, s_retryCount);
+        if (best.fd >= 0) {
+            s_fd = best.fd;
+            s_absMaxX = best.absMaxX;
+            s_absMaxY = best.absMaxY;
+            snprintf(s_devPath, sizeof(s_devPath), "%s", best.path);
+            snprintf(s_devName, sizeof(s_devName), "%s", best.name);
+            LOG(LOG_LEVEL_INFO, "[Touch] ✓ 选中触摸设备: %s (%s) score=%d (重试 %d 次)",
+                s_devPath, s_devName, best.score, s_retryCount);
             LOG(LOG_LEVEL_INFO, "[Touch]   数字化仪范围: X=0..%.0f  Y=0..%.0f  (宽高比=%.2f)",
                 s_absMaxX, s_absMaxY, s_absMaxX / s_absMaxY);
             return;
@@ -186,7 +346,7 @@ namespace touch_input {
 
         // 仍然失败, 保持 s_fd = -2 以便下次重试
         if (s_retryCount <= 3) {
-            LOG(LOG_LEVEL_INFO, "[Touch] 等待权限... (第 %d 次尝试)", s_retryCount);
+            LOG(LOG_LEVEL_INFO, "[Touch] 等待权限或设备匹配... (第 %d 次尝试, 扫描 /dev/input/event0~31)", s_retryCount);
         }
     }
 
@@ -270,9 +430,13 @@ namespace touch_input {
 
     static void drawDebugIndicator() {
         if (s_fd < 0 || s_curX < 0.0f) return;
+        if (!s_touching) return;  // 仅在触摸时显示
         auto* dl = ImGui::GetForegroundDrawList();
-        ImU32 color = s_touching ? IM_COL32(255, 0, 0, 180) : IM_COL32(255, 255, 0, 80);
-        dl->AddCircleFilled(ImVec2(s_curX, s_curY), 15.0f, color);
+        ImVec2 pos(s_curX, s_curY);
+        // 外圈白色环 + 内圈红色实心，更醒目
+        dl->AddCircleFilled(pos, 22.0f, IM_COL32(255, 255, 255, 120));
+        dl->AddCircleFilled(pos, 14.0f, IM_COL32(255, 50, 50, 220));
+        dl->AddCircle(pos, 22.0f, IM_COL32(255, 255, 255, 200), 0, 2.0f);
     }
 
 } // namespace touch_input
@@ -487,6 +651,27 @@ namespace egl_hook {
 
             // 触摸调试: 红色圆点跟随手指 (确认触摸是否生效)
             touch_input::drawDebugIndicator();
+
+            // 触摸诊断日志 (每 3 秒打印一次)
+            {
+                static double s_lastDiag = 0.0;
+                double nowD = (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+                if (nowD - s_lastDiag > 3.0) {
+                    s_lastDiag = nowD;
+                    LOG(LOG_LEVEL_INFO, "[TouchDiag] MousePos=(%.0f,%.0f) MouseDown=%d WantCaptureMouse=%d DisplaySize=(%.0f,%.0f) fd=%d dev=%s name=%s raw=(%.4f,%.4f) cur=(%.0f,%.0f) touching=%d rot=%s",
+                        io.MousePos.x, io.MousePos.y,
+                        io.MouseDown[0] ? 1 : 0,
+                        io.WantCaptureMouse ? 1 : 0,
+                        io.DisplaySize.x, io.DisplaySize.y,
+                        touch_input::getFd(),
+                        touch_input::getDevicePath(),
+                        touch_input::getDeviceName(),
+                        touch_input::getRawX(), touch_input::getRawY(),
+                        touch_input::getCurX(), touch_input::getCurY(),
+                        touch_input::isTouching() ? 1 : 0,
+                        touch_input::getRotationLabel());
+                }
+            }
 
             ImGui::Render();
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

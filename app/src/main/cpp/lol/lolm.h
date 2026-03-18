@@ -45,6 +45,7 @@ namespace lol {
         float       screenX;        ///< 屏幕坐标 X（Unity 屏幕空间，原点左下）
         float       screenY;        ///< 屏幕坐标 Y（Unity 屏幕空间，原点左下）
         bool        hasScreenPos;   ///< 屏幕坐标是否有效
+        float       atkRange;       ///< 普攻最大范围（Fix64 转 float），-1 表示无效
     };
 
     /** @brief 眼/守卫信息 */
@@ -220,6 +221,20 @@ namespace lol {
          */
         void* getActorAttribute(void* actorVisi);
 
+    public:
+        /**
+         * @brief  获取普通攻击的最大施法距离（浮点值）
+         * @param  actorVisi  BattleActorVisi 对象指针（己方英雄）
+         * @return 普攻最大范围(float)，失败返回 -1.0f
+         *
+         * @details 链路: BattleActorVisi → get_actor() → BattleActor
+         *          → get_skillMgr() → get_attackSkill() → GetSkillOperateResObject()
+         *          → GetMaxCastDist_Fix64() → DecoderFix64()
+         */
+        float getNormalAttackMaxRange(void* actorVisi);
+
+    private:
+
         /**
          * @brief  读取敌方英雄的 HP 信息并输出日志
          * @param  actor  BattleActorVisi 对象指针
@@ -276,9 +291,9 @@ namespace lol {
          * @param  pObject  托管对象指针
          * @return Il2CppClass* 或 nullptr
          */
-        inline Il2CppClass* GetObjectKlass(void* pObject) {
+        inline ::Il2CppClass* GetObjectKlass(void* pObject) {
             if (!pObject) return nullptr;
-            return reinterpret_cast<Il2CppClass*>(*reinterpret_cast<uint64_t*>(pObject));
+            return reinterpret_cast<::Il2CppClass*>(*reinterpret_cast<uint64_t*>(pObject));
         }
 
         /**
@@ -287,7 +302,7 @@ namespace lol {
          * @param  fieldName  字段名称
          * @return 字段偏移，查找失败返回 INVALID_OFFSET
          */
-        uint32_t GetFieldOffsetFromKlass(Il2CppClass* klass, const char* fieldName);
+        uint32_t GetFieldOffsetFromKlass(::Il2CppClass* klass, const char* fieldName);
 
         /**
          * @brief  从运行时对象（含类层次链）动态查找指定字段的偏移量
@@ -306,7 +321,7 @@ namespace lol {
          * @param  outValue   [传出] 读取到的值
          * @return 成功返回 true，失败返回 false
          */
-        bool ReadStaticFieldInt32(Il2CppClass* klass, const char* fieldName, int32_t& outValue);
+        bool ReadStaticFieldInt32(::Il2CppClass* klass, const char* fieldName, int32_t& outValue);
 
         /**
          * @brief   通过对象基地址 + 偏移读取成员值（模板版本，支持任意类型）

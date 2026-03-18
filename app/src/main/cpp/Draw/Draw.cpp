@@ -58,11 +58,12 @@ ImVec2 GameOverlay::xzToMinimap(float wx, float wz,
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void GameOverlay::drawOverlay(const lol::MiniMapData& data, bool inBattle) {
-    if (m_enableInfo) drawInfoPanel(data, inBattle);
     if (inBattle) {
         if (m_enableESP)   drawESP(data);
         if (m_enableRadar) drawRadar(data);
     }
+    // Game Info 最后绘制，确保它在最上层可接收触摸/拖拽
+    if (m_enableInfo) drawInfoPanel(data, inBattle);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -70,7 +71,8 @@ void GameOverlay::drawOverlay(const lol::MiniMapData& data, bool inBattle) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
-    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
+    // 当前关闭了 ImGui ini 持久化，FirstUseEver 会导致位置反复被重置。
+    ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_Once);
     ImGui::SetNextWindowBgAlpha(0.65f);
     ImGui::Begin("Game Info", nullptr,
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
@@ -272,8 +274,8 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
     float winH = radarSize + winPad * 2;
     ImGui::SetNextWindowPos(
         ImVec2(margin, margin),
-        ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
+        ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_Once);
     ImGui::SetNextWindowBgAlpha(0.0f);
     ImGui::Begin("## Radar", nullptr,
                  ImGuiWindowFlags_NoTitleBar |
