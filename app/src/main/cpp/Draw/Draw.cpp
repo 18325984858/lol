@@ -280,7 +280,8 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
     ImGui::Begin("## Radar", nullptr,
                  ImGuiWindowFlags_NoTitleBar |
                  ImGuiWindowFlags_NoResize |
-                 ImGuiWindowFlags_NoScrollbar);
+                 ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus);
 
     ImVec2 cursor0 = ImGui::GetCursorScreenPos();
 

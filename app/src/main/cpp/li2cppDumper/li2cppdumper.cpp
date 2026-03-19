@@ -244,6 +244,11 @@ std::string li2cpp::li2cppDumper::dumpType(const Il2CppType *type, int classInde
     outPut << "\n{";
     outPut << dump_field(klass);
     outPut << dump_property(klass);
+
+    // 初始化所有方法指针后再 dump（确保 methodPointer 可用）
+    // 注意: 不调用 il2cpp_runtime_class_init, 它会触发 .cctor 可能崩溃
+    il2cpp_class_init_all_method(klass);
+
     outPut << dump_method(klass);
     outPut << "}\n";
 

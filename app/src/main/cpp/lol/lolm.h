@@ -233,6 +233,18 @@ namespace lol {
          */
         float getNormalAttackMaxRange(void* actorVisi);
 
+        /**
+         * @brief  计算技能最大施法距离（模拟 sub_55EB554）
+         * @param  pActorSkill  ActorSkill 托管对象指针
+         * @return 技能最大范围(float)，失败返回 -1.0f
+         *
+         * @details 根据 FPTemplate 的 iTPMaxDistanceType 分支:
+         *   case 1: payload=1 → baseRange; payload=2 → max(baseRange, globalRange)
+         *   case 2: MaxDist / 10000.0
+         *   case 3: baseRange + MaxDist / 10000.0
+         */
+        float computeSkillMaxRange(void* pActorSkill);
+
     private:
 
         /**

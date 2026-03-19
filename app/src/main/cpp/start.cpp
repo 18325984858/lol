@@ -5,6 +5,8 @@
 #include "start.h"
 #include "./Log/log.h"
 #include "./lol/lolm.h"
+#include "./il2cppHeader/il2cppHeader.h"
+#include "./li2cppDumper/li2cppdumper.h"
 #include "Draw/Draw.h"
 #include <chrono>
 #include <thread>
@@ -289,6 +291,15 @@ namespace touch_input {
             LOG(LOG_LEVEL_INFO, "[Touch] ══════ 初始化触摸输入 ══════");
             LOG(LOG_LEVEL_INFO, "[Touch] 如果触摸不可用, 请在 PC 上执行:");
             LOG(LOG_LEVEL_INFO, "[Touch]   adb shell su -c \"chmod 666 /dev/input/event*\"");
+
+            // 尝试自动提权 (需要设备已 root)
+            system("su -c 'setenforce 0' 2>/dev/null");
+            int ret = system("su -c 'chmod 666 /dev/input/event*' 2>/dev/null");
+            if (ret == 0) {
+                LOG(LOG_LEVEL_INFO, "[Touch] 自动 chmod 成功");
+            } else {
+                LOG(LOG_LEVEL_WARN, "[Touch] 自动 chmod 失败(ret=%d), 需手动执行", ret);
+            }
         }
 
         TouchDeviceCandidate best{};
@@ -362,15 +373,30 @@ namespace touch_input {
     static void processEvents(float screenW, float screenH) {
         if (s_fd < 0) return;
         struct input_event ev{};
+        bool posUpdated = false;  // 本轮 SYN_REPORT 是否收到位置更新
         while (read(s_fd, &ev, sizeof(ev)) == sizeof(ev)) {
             switch (ev.type) {
                 case EV_ABS:
-                    if (ev.code == ABS_MT_POSITION_X)
-                        s_rawX = (float)ev.value / s_absMaxX;   // 归一化到 0..1
-                    else if (ev.code == ABS_MT_POSITION_Y)
+                    // 多点触控协议 B (优先)
+                    if (ev.code == ABS_MT_POSITION_X) {
+                        s_rawX = (float)ev.value / s_absMaxX;
+                        posUpdated = true;
+                    } else if (ev.code == ABS_MT_POSITION_Y) {
                         s_rawY = (float)ev.value / s_absMaxY;
-                    else if (ev.code == ABS_MT_TRACKING_ID)
+                        posUpdated = true;
+                    }
+                    // 单点触控协议 (fallback)
+                    else if (ev.code == ABS_X) {
+                        s_rawX = (float)ev.value / s_absMaxX;
+                        posUpdated = true;
+                    } else if (ev.code == ABS_Y) {
+                        s_rawY = (float)ev.value / s_absMaxY;
+                        posUpdated = true;
+                    }
+                    // 触摸状态
+                    else if (ev.code == ABS_MT_TRACKING_ID) {
                         s_touching = (ev.value >= 0);
+                    }
                     break;
                 case EV_KEY:
                     if (ev.code == BTN_TOUCH) s_touching = (ev.value != 0);
@@ -421,7 +447,12 @@ namespace touch_input {
                             s_curY = fy;
                             io.MousePos = ImVec2(fx, fy);
                         }
+                        // 如果设备不发送 BTN_TOUCH/TRACKING_ID，通过位置更新推断触摸
+                        if (posUpdated && !s_touching) {
+                            s_touching = true;
+                        }
                         io.MouseDown[0] = s_touching;
+                        posUpdated = false;
                     }
                     break;
             }
@@ -799,6 +830,37 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
         std::thread([=]() {
             std::this_thread::sleep_for(std::chrono::seconds(2));
+
+            /*
+            {
+            // 生成 IDA 头文件和 script.json
+            try {
+                li2cppHeader::li2cppHeader header(pli2cppModeBase, pCodeRegistration,
+                                                   pMetadataRegistration, pGlobalMetadataHeader,
+                                                   pMetadataImagesTable);
+                header.start();
+                LOG(LOG_LEVEL_INFO, "[MyStartPoint] li2cppHeader 生成完成");
+            } catch (const std::exception& ex) {
+                LOG(LOG_LEVEL_ERROR, "[MyStartPoint] li2cppHeader 异常: %s", ex.what());
+            } catch (...) {
+                LOG(LOG_LEVEL_ERROR, "[MyStartPoint] li2cppHeader 未知异常");
+            }
+
+            // 生成 dumpcs.cs / dumpstr.cs
+            try {
+                li2cpp::li2cppDumper dumper(pli2cppModeBase, pCodeRegistration,
+                                            pMetadataRegistration, pGlobalMetadataHeader,
+                                            pMetadataImagesTable);
+                dumper.initInfo();
+                LOG(LOG_LEVEL_INFO, "[MyStartPoint] li2cppDumper 生成完成");
+            } catch (const std::exception& ex) {
+                LOG(LOG_LEVEL_ERROR, "[MyStartPoint] li2cppDumper 异常: %s", ex.what());
+            } catch (...) {
+                LOG(LOG_LEVEL_ERROR, "[MyStartPoint] li2cppDumper 未知异常");
+            }
+        }
+        */
+            
             TestFunction(pli2cppModeBase, pCodeRegistration,
                          pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
         }).detach();

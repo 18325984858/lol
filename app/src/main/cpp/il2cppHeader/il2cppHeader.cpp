@@ -176,7 +176,11 @@ void li2cppHeader::li2cppHeader::Init(
             unityClass->typeAttr.bits.isStruct = isValueType && !isEnum;
             unityClass->typeAttr.bits.isInterface = (unityClass->flags & 0x00000020);
 
-            // 6. 获取成员 (注意：DumpFields 内部调用的 GetIdaCompatibleType 也要改)
+            // 6. 初始化类的所有方法指针（确保 methodPointer 可用）
+            // 注意: 不调用 il2cpp_runtime_class_init, 它会触发 .cctor 可能崩溃
+            il2cpp_class_init_all_method(const_cast<Il2CppClass *>(klass));
+
+            // 7. 获取成员 (注意：DumpFields 内部调用的 GetIdaCompatibleType 也要改)
             // 确保 DumpFields 内部引用其他类时，也是调用 GetSafeUniqueName
             DumpFields(const_cast<Il2CppClass *>(klass), unityClass);
 
@@ -238,6 +242,14 @@ void li2cppHeader::li2cppHeader::DumpFields(Il2CppClass* klass, std::shared_ptr<
         // 3. 清洗字段名（处理 <xxx>k__BackingField 等非法C标识符）
         std::string safeFieldName = fieldName ? CleanIdentifier(fieldName) : "Unnamed_Field";
 
+        // 对泛型值类型 (GENERICINST + valuetype)，GetIdaCompatibleType 返回 "uint8_t"
+        // 需要加上数组标记 [size] 来保证占用正确的字节数
+        if (type->type == IL2CPP_TYPE_GENERICINST && idaTypeName == "uint8_t") {
+            uint32_t valSize = GetTypeSize(type);
+            if (valSize == 0) valSize = 4;
+            safeFieldName += "[" + std::to_string(valSize) + "]";
+        }
+
         // 4. 存储到结构体
         unityClass->fields.emplace_back(
                 safeFieldName,
@@ -289,10 +301,22 @@ std::string li2cppHeader::li2cppHeader::GetIdaCompatibleType(const Il2CppType* t
             return "struct " + GetSafeUniqueName(elementKlass) + "_array*";
         }
 
-        case IL2CPP_TYPE_CLASS:
+        case IL2CPP_TYPE_CLASS: {
+            Il2CppClass* klass = il2cpp_class_from_type(type);
+            return "struct " + GetSafeUniqueName(klass) + "_o*";
+        }
+
         case IL2CPP_TYPE_GENERICINST: {
             Il2CppClass* klass = il2cpp_class_from_type(type);
-            return "struct " + GetSafeUniqueName(klass) + "_o*"; // 直接用，不要拼
+            // 泛型值类型 (如 Nullable<T>, KeyValuePair<K,V>) 需要内联而不是指针
+            if (il2cpp_class_is_valuetype(klass)) {
+                if (il2cpp_class_is_enum(klass)) return "int32_t";
+                uint32_t valSize = il2cpp_class_instance_size(klass);
+                valSize = (valSize > 0x10) ? (valSize - 0x10) : valSize;
+                if (valSize == 0) valSize = 4;
+                return "uint8_t";
+            }
+            return "struct " + GetSafeUniqueName(klass) + "_o*";
         }
 
         case IL2CPP_TYPE_VALUETYPE: {
@@ -549,23 +573,39 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
         return name.empty() || name == "System_Object" || name == "System_ValueType" || name == "System_Enum";
     };
 
-    // ====== 拓扑排序：确保父类结构体在子类之前输出 ======
-    // 这样 struct Child_Fields : Parent_Fields {} 才能在 IDA 中正确解析
+    // ====== 拓扑排序：确保父类和值类型依赖在引用者之前输出 ======
     std::vector<std::string> sortedKeys;
     {
         std::set<std::string> visited;
+        std::set<std::string> inStack; // 检测循环依赖
         std::function<void(const std::string&)> topoVisit = [&](const std::string& key) {
             if (visited.count(key)) return;
-            visited.insert(key);
+            if (inStack.count(key)) return; // 循环依赖，跳过
+            inStack.insert(key);
             auto it = m_classMap.find(key);
-            if (it == m_classMap.end()) return;
+            if (it == m_classMap.end()) { inStack.erase(key); return; }
             auto& cls = it->second;
-            // 如果有有效父类且存在于 classMap 中，先递归访问父类
+            // 1. 父类依赖
             if (!isBaseParent(cls->parentSafeName) && !cls->typeAttr.bits.isValueType) {
                 if (m_classMap.count(cls->parentSafeName)) {
                     topoVisit(cls->parentSafeName);
                 }
             }
+            // 2. 值类型字段依赖 (内联嵌入的 struct XXX_Fields)
+            for (const auto& field : cls->fields) {
+                if (field.isStatic) continue;
+                const std::string& t = field.typeName;
+                // 匹配 "struct XXX_Fields" 模式
+                if (t.size() > 14 && t.compare(0, 7, "struct ") == 0
+                    && t.compare(t.size() - 7, 7, "_Fields") == 0) {
+                    std::string depKey = t.substr(7, t.size() - 14);
+                    if (m_classMap.count(depKey)) {
+                        topoVisit(depKey);
+                    }
+                }
+            }
+            inStack.erase(key);
+            visited.insert(key);
             sortedKeys.push_back(key);
         };
         for (auto const& [key, _] : m_classMap) {
@@ -573,8 +613,25 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
         }
     }
 
-    // 记录已输出的前向定义，避免重复
+    // ====== 收集所有被引用但不在 classMap 中的值类型，生成前向声明 ======
     std::set<std::string> emittedForwardDecls;
+    for (const auto& uniqueKey : sortedKeys) {
+        auto& cls = m_classMap[uniqueKey];
+        for (const auto& field : cls->fields) {
+            if (field.isStatic) continue;
+            const std::string& t = field.typeName;
+            if (t.size() > 14 && t.compare(0, 7, "struct ") == 0
+                && t.compare(t.size() - 7, 7, "_Fields") == 0) {
+                std::string depKey = t.substr(7, t.size() - 14);
+                std::string fwdName = depKey + "_Fields";
+                if (!m_classMap.count(depKey) && !emittedForwardDecls.count(fwdName)) {
+                    // 未定义的值类型，生成空前向声明让 IDA 不报错
+                    fout << "struct " << fwdName << " { }; /* forward decl */\n";
+                    emittedForwardDecls.insert(fwdName);
+                }
+            }
+        }
+    }
 
     for (const auto& uniqueKey : sortedKeys) {
         auto& cls = m_classMap[uniqueKey];
@@ -613,7 +670,7 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
         }
         for (const auto& field : cls->fields) {
             if (!field.isStatic) {
-                fout << "    " << field.typeName << " " << field.name << "; // " << IntToHex(field.offset) << "\n";
+                fout << "    " << field.typeName << " " << field.name << "; /* " << IntToHex(field.offset) << " */\n";
             }
         }
         fout << "};\n";
@@ -659,7 +716,7 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
             fout << "struct " << uniqueKey << "_StaticFields {\n";
             for (const auto& field : cls->fields) {
                 if (field.isStatic) {
-                    fout << "    " << field.typeName << " " << field.name << "; // " << IntToHex(field.offset) << "\n";
+                    fout << "    " << field.typeName << " " << field.name << "; /* " << IntToHex(field.offset) << " */\n";
                 }
             }
             fout << "};\n";

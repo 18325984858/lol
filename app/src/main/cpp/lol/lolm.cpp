@@ -968,31 +968,10 @@ bool lol::FEVisi::IsReadableMemory(const void* ptr, size_t size) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // getNormalAttackMaxRange — 获取普通攻击最大施法距离
 //
-// ⚠ 注意: 本游戏 il2cpp 代码段部分被加密，不能用 base+RVA 直接调用！
-//         必须使用 GetMethodFun 动态解析，或直接读取内存偏移。
-//
-// ═══ IDA + Dump 分析结论 ══════════════════════════════════════════════════
-//
-// 1. ActorComponentSkillMgr.GetNormalAttackSkill() (RVA 0x84A8798)
-//    可以稳定拿到普攻 ActorSkill。
-//
-// 2. UI 侧 SkillJoystick::IsAimMaxRange() (RVA 0x52A428C) 直接把
-//    NormalAttackSkill 传给 sub_55EB554；sub_55EB554 就是“普攻最大范围”
-//    的核心计算器。
-//
-// 3. sub_55EB554 的计算链路:
-//      ActorSkill
-//        -> SkillOperateResObject
-//        -> FPTemplateResObject
-//        -> (iTPMaxDistanceType, iTPMaxDistance)
-//    其中 iTPMaxDistance 是 int / 10000.0f，case 2 直接取 MaxDist，
-//    case 3 为 base + MaxDist，case 1 使用基础距离/全局距离分支。
-//
-// 4. dump/il2cpp.h 同时暴露了 ActorSkill 的运行时范围字段
-//    _maxRange/_configMaxRange。它们比 minSearchRange 更接近最终结果，
-//    因此优先直接读取 ActorSkill._maxRange；若读不到，再退回 FPTemplate
-//    公式和旧的 minSearchRange 兜底。
-//
+// IDA FE_TN75 (ActorSkill_GetCurRangeSync) 分析结论:
+//   native 实例 +0x58 / +0xB8 存储当前范围 (Fix64)
+//   托管层对应字段: _maxRange / _configMaxRange
+//   优先读取 _maxRange，fallback 读取 _configMaxRange
 // ═══════════════════════════════════════════════════════════════════════════════
 
 float lol::FEVisi::getNormalAttackMaxRange(void* actorVisi) {
@@ -1024,33 +1003,6 @@ float lol::FEVisi::getNormalAttackMaxRange(void* actorVisi) {
             "[AtkRange] %s 命中: off=0x%X raw=0x%llX -> %.4f",
             tag, offset, (unsigned long long)raw, value);
         return true;
-    };
-
-    auto tryDecodeFix64Raw = [&](int64_t raw, const char* tag, float* outValue) -> bool {
-        if (raw == 0 || outValue == nullptr) return false;
-        float value = DecoderFix64((uint64_t)raw);
-        if (!isReasonableRange(value)) {
-            LOG(LOG_LEVEL_WARN,
-                "[AtkRange] %s 解码异常: raw=0x%llX -> %.4f",
-                tag, (unsigned long long)raw, value);
-            return false;
-        }
-
-        *outValue = value;
-        LOG(LOG_LEVEL_INFO,
-            "[AtkRange] %s 命中: raw=0x%llX -> %.4f",
-            tag, (unsigned long long)raw, value);
-        return true;
-    };
-
-    auto tryGetRuntimeFieldOffset = [&](void* object,
-                                        const char* fieldNameA,
-                                        const char* fieldNameB = nullptr) -> uint32_t {
-        uint32_t offset = GetFieldOffsetFromObject(object, fieldNameA);
-        if (offset == INVALID_OFFSET && fieldNameB && fieldNameB[0] != '\0') {
-            offset = GetFieldOffsetFromObject(object, fieldNameB);
-        }
-        return offset;
     };
 
     // ── 1. BattleActorVisi → get_actor() → BattleActor ──
@@ -1108,315 +1060,219 @@ float lol::FEVisi::getNormalAttackMaxRange(void* actorVisi) {
     if (!pActorSkill && s_getAttackSkill) {
         pActorSkill = s_getAttackSkill(pSkillMgr);
     }
+    if (!pActorSkill || !IsReadableMemory(pActorSkill, 0xC0)) return -1.0f;
 
-    if (pActorSkill) {
-        LOG(LOG_LEVEL_INFO, "[AtkRange] ActorSkill=%p type=%s",
-            pActorSkill, getManagedTypeName(pActorSkill).c_str());
+    // ── 4. 读取 ActorSkill._maxRange / _configMaxRange ──
+    static bool s_fieldInit = false;
+    static uint32_t s_maxRangeOffset = INVALID_OFFSET;
+    static uint32_t s_configMaxRangeOffset = INVALID_OFFSET;
+    if (!s_fieldInit) {
+        s_fieldInit = true;
+        s_maxRangeOffset = GetFieldOffsetFromObject(pActorSkill, "_maxRange");
+        if (s_maxRangeOffset == INVALID_OFFSET)
+            s_maxRangeOffset = GetFieldOffsetFromObject(pActorSkill, "maxRange");
+        s_configMaxRangeOffset = GetFieldOffsetFromObject(pActorSkill, "_configMaxRange");
+        if (s_configMaxRangeOffset == INVALID_OFFSET)
+            s_configMaxRangeOffset = GetFieldOffsetFromObject(pActorSkill, "configMaxRange");
+
+        LOG(LOG_LEVEL_INFO,
+            "[AtkRange] ActorSkill field offsets: _maxRange=0x%X _configMaxRange=0x%X",
+            s_maxRangeOffset, s_configMaxRangeOffset);
     }
 
-    typedef int64_t (*FnGetFix64FromActorSkill)(void*);
-    typedef int64_t (*FnGetGlobalFix64)();
-
-    static FnGetFix64FromActorSkill s_getBaseRangeDirect = nullptr;
-    static FnGetGlobalFix64 s_getGlobalRangeDirect = nullptr;
-    if (!s_getBaseRangeDirect) {
-        s_getBaseRangeDirect = (FnGetFix64FromActorSkill)((uint64_t)m_il2cppBase + 0x8A1DDE8);
-    }
-    if (!s_getGlobalRangeDirect) {
-        s_getGlobalRangeDirect = (FnGetGlobalFix64)((uint64_t)m_il2cppBase + 0xA49CDE8);
+    // 优先 _maxRange
+    float range = -1.0f;
+    if (tryDecodeFix64Field(pActorSkill, s_maxRangeOffset, "ActorSkill._maxRange", &range)) {
+        return range;
     }
 
-    float baseRange = -1.0f;
-    float minSearchRange = -1.0f;
-
-    // ── 4. 优先直读 ActorSkill._maxRange / _configMaxRange ──
-    if (pActorSkill && IsReadableMemory(pActorSkill, 0xC0)) {
-        static bool s_actorSkillFieldInit = false;
-        static uint32_t s_actorSkillMaxRangeOffset = INVALID_OFFSET;
-        static uint32_t s_actorSkillConfigMaxRangeOffset = INVALID_OFFSET;
-        static uint32_t s_actorSkillDCOffset = INVALID_OFFSET;
-        static uint32_t s_actorSkillDcSkillOpOffset = INVALID_OFFSET;
-        static uint32_t s_skillOpTemplateOffset = INVALID_OFFSET;
-        static uint32_t s_workflowInstanceLongOffset = INVALID_OFFSET;
-        static bool s_fpTemplateNativeOffsetInit = false;
-        static uint32_t s_fpTemplateMinDistNativeOffset = INVALID_OFFSET;
-        static uint32_t s_fpTemplateMaxTypeNativeOffset = INVALID_OFFSET;
-        static uint32_t s_fpTemplateMaxDistNativeOffset = INVALID_OFFSET;
-        if (!s_actorSkillFieldInit) {
-            s_actorSkillFieldInit = true;
-            s_actorSkillMaxRangeOffset = tryGetRuntimeFieldOffset(
-                pActorSkill, "_maxRange", "maxRange");
-            s_actorSkillConfigMaxRangeOffset = tryGetRuntimeFieldOffset(
-                pActorSkill, "_configMaxRange", "configMaxRange");
-            s_actorSkillDCOffset = tryGetRuntimeFieldOffset(
-                pActorSkill, "DC", "__DC");
-
-            LOG(LOG_LEVEL_INFO,
-            "[AtkRange] ActorSkill field offsets: _maxRange=0x%X _configMaxRange=0x%X DC=0x%X",
-                s_actorSkillMaxRangeOffset,
-                s_actorSkillConfigMaxRangeOffset,
-            s_actorSkillDCOffset);
-        }
-
-        float directMaxRange = -1.0f;
-        if (tryDecodeFix64Field(pActorSkill, s_actorSkillMaxRangeOffset,
-                                "ActorSkill._maxRange", &directMaxRange)) {
-            return directMaxRange;
-        }
-
-        tryDecodeFix64Field(pActorSkill, s_actorSkillConfigMaxRangeOffset,
-                            "ActorSkill._configMaxRange", &baseRange);
-
-        if (!isReasonableRange(baseRange) && s_getBaseRangeDirect) {
-            int64_t baseRangeRaw = s_getBaseRangeDirect(pActorSkill);
-            tryDecodeFix64Raw(baseRangeRaw, "ActorSkill.baseRange(direct)", &baseRange);
-        }
-
-        // ── 5. 二级路径: ActorSkill_DC._skillOp -> FPTemplate -> native 字段 ──
-        void* pActorSkillDC = ReadMemberPtr(pActorSkill, s_actorSkillDCOffset);
-        if (pActorSkillDC) {
-            LOG(LOG_LEVEL_INFO, "[AtkRange] ActorSkillDC=%p type=%s",
-                pActorSkillDC, getManagedTypeName(pActorSkillDC).c_str());
-        }
-
-        if (pActorSkillDC && s_actorSkillDcSkillOpOffset == INVALID_OFFSET) {
-            s_actorSkillDcSkillOpOffset = tryGetRuntimeFieldOffset(
-                    pActorSkillDC, "_skillOp", "skillOp");
-            LOG(LOG_LEVEL_INFO, "[AtkRange] ActorSkillDC field offset: _skillOp=0x%X",
-                s_actorSkillDcSkillOpOffset);
-        }
-
-        void* pSkillOperate = nullptr;
-        if (pActorSkillDC && s_actorSkillDcSkillOpOffset != INVALID_OFFSET) {
-            pSkillOperate = ReadMemberPtr(pActorSkillDC, s_actorSkillDcSkillOpOffset);
-        }
-
-        static bool s_skillOpMethodInit = false;
-        static FnGetActorSkill s_getSkillOperateResObject = nullptr;
-        if (!s_skillOpMethodInit) {
-            s_skillOpMethodInit = true;
-            s_getSkillOperateResObject = (FnGetActorSkill)m_pfunctionInfo->GetMethodFun(
-                    "ilbil2cpp.so", "Assembly-CSharp.dll",
-                    "ActorSkill", "FrameEngine.Logic.ActorSkill",
-                    "GetSkillOperateResObject");
-            LOG(LOG_LEVEL_INFO, "[AtkRange] GetSkillOperateResObject=%p",
-                (void*)s_getSkillOperateResObject);
-        }
-        if (!pSkillOperate && s_getSkillOperateResObject) {
-            pSkillOperate = s_getSkillOperateResObject(pActorSkill);
-        }
-
-        if (pSkillOperate) {
-            LOG(LOG_LEVEL_INFO, "[AtkRange] SkillOperate=%p type=%s",
-                pSkillOperate, getManagedTypeName(pSkillOperate).c_str());
-        }
-
-        if (pSkillOperate && s_skillOpTemplateOffset == INVALID_OFFSET) {
-            s_skillOpTemplateOffset = tryGetRuntimeFieldOffset(
-                    pSkillOperate, "_FPTemplate", "FPTemplate");
-            LOG(LOG_LEVEL_INFO, "[AtkRange] SkillOperate field offset: _FPTemplate=0x%X",
-                s_skillOpTemplateOffset);
-        }
-
-        void* pFPTemplate = nullptr;
-        if (pSkillOperate && s_skillOpTemplateOffset != INVALID_OFFSET) {
-            pFPTemplate = ReadMemberPtr(pSkillOperate, s_skillOpTemplateOffset);
-        }
-
-        static FnGetActorSkill s_getFPTemplate = nullptr;
-        static bool s_fpTemplateMethodInit = false;
-        if (!s_fpTemplateMethodInit) {
-            s_fpTemplateMethodInit = true;
-            s_getFPTemplate = (FnGetActorSkill)m_pfunctionInfo->GetMethodFun(
-                    "ilbil2cpp.so", "Assembly-CSharp.dll",
-                    "SkillOperateResObject", "FrameEngine.Common.SkillOperateResObject",
-                    "GetFPTemplate");
-            LOG(LOG_LEVEL_INFO, "[AtkRange] GetFPTemplate=%p", (void*)s_getFPTemplate);
-        }
-        if (!pFPTemplate && pSkillOperate && s_getFPTemplate) {
-            pFPTemplate = s_getFPTemplate(pSkillOperate);
-        }
-
-        if (pFPTemplate) {
-            LOG(LOG_LEVEL_INFO, "[AtkRange] FPTemplate=%p type=%s",
-                pFPTemplate, getManagedTypeName(pFPTemplate).c_str());
-        }
-
-        if (pFPTemplate && s_workflowInstanceLongOffset == INVALID_OFFSET) {
-            s_workflowInstanceLongOffset = tryGetRuntimeFieldOffset(
-                    pFPTemplate, "InstanceLongValue", "__InstanceLongValue");
-            if (s_workflowInstanceLongOffset == INVALID_OFFSET) {
-                s_workflowInstanceLongOffset = tryGetRuntimeFieldOffset(
-                        pFPTemplate, "Instance", "__Instance");
-            }
-            LOG(LOG_LEVEL_INFO,
-                "[AtkRange] FPTemplate field offset: InstanceLongValue/Instance=0x%X",
-                s_workflowInstanceLongOffset);
-        }
-
-        if (pFPTemplate && s_workflowInstanceLongOffset != INVALID_OFFSET) {
-            auto* nativePtrAddr = reinterpret_cast<uint8_t*>(pFPTemplate) + s_workflowInstanceLongOffset;
-            if (IsReadableMemory(nativePtrAddr, sizeof(int64_t))) {
-                int64_t fpTemplateNative = *reinterpret_cast<int64_t*>(nativePtrAddr);
-                if (fpTemplateNative && IsReadableMemory((void*)fpTemplateNative, 0x28)) {
-                    if (!s_fpTemplateNativeOffsetInit) {
-                        s_fpTemplateNativeOffsetInit = true;
-
-                        auto* layoutDumpClass = m_pfunctionInfo->FindClassByName(
-                                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                                "LayoutDump", "FrameEngine.Common.LayoutDump");
-                        if (layoutDumpClass) {
-                            m_pfunctionInfo->il2cpp_runtime_class_init(layoutDumpClass);
-
-                            int32_t minOffset = -1;
-                            int32_t maxTypeOffset = -1;
-                            int32_t maxDistOffset = -1;
-                            if (ReadStaticFieldInt32(layoutDumpClass,
-                                                     "FrameEngine_Common_FPTemplateResObject_iTPMinDistance_offset",
-                                                     minOffset) && minOffset >= 0) {
-                                s_fpTemplateMinDistNativeOffset = static_cast<uint32_t>(minOffset);
-                            }
-                            if (ReadStaticFieldInt32(layoutDumpClass,
-                                                     "FrameEngine_Common_FPTemplateResObject_iTPMaxDistanceType_offset",
-                                                     maxTypeOffset) && maxTypeOffset >= 0) {
-                                s_fpTemplateMaxTypeNativeOffset = static_cast<uint32_t>(maxTypeOffset);
-                            }
-                            if (ReadStaticFieldInt32(layoutDumpClass,
-                                                     "FrameEngine_Common_FPTemplateResObject_iTPMaxDistance_offset",
-                                                     maxDistOffset) && maxDistOffset >= 0) {
-                                s_fpTemplateMaxDistNativeOffset = static_cast<uint32_t>(maxDistOffset);
-                            }
-                        }
-
-                        LOG(LOG_LEVEL_INFO,
-                            "[AtkRange] LayoutDump FPTemplate offsets: min=0x%X type=0x%X max=0x%X",
-                            s_fpTemplateMinDistNativeOffset,
-                            s_fpTemplateMaxTypeNativeOffset,
-                            s_fpTemplateMaxDistNativeOffset);
-                    }
-
-                    uint32_t tpMinOffset =
-                            s_fpTemplateMinDistNativeOffset != INVALID_OFFSET ? s_fpTemplateMinDistNativeOffset : 0x1C;
-                    uint32_t tpMaxTypeOffset =
-                            s_fpTemplateMaxTypeNativeOffset != INVALID_OFFSET ? s_fpTemplateMaxTypeNativeOffset : 0x20;
-                    uint32_t tpMaxDistOffset =
-                            s_fpTemplateMaxDistNativeOffset != INVALID_OFFSET ? s_fpTemplateMaxDistNativeOffset : 0x24;
-
-                    int32_t tpMinDistance = *reinterpret_cast<int32_t*>(fpTemplateNative + tpMinOffset);
-                    int32_t tpMaxDistanceType = *reinterpret_cast<int32_t*>(fpTemplateNative + tpMaxTypeOffset);
-                    int32_t tpPayload = *reinterpret_cast<int32_t*>(fpTemplateNative + tpMaxDistOffset);
-
-                    float payloadAsRange = (float)tpPayload / 10000.0f;
-                    float minDist = (float)tpMinDistance / 10000.0f;
-                    auto isNonNegativeRange = [](float value) -> bool {
-                        return value >= 0.0f && value <= 30.0f;
-                    };
-
-                    float globalRange = -1.0f;
-                    if (tpMaxDistanceType == 1 && tpPayload == 2 && s_getGlobalRangeDirect) {
-                        int64_t globalRangeRaw = s_getGlobalRangeDirect();
-                        tryDecodeFix64Raw(globalRangeRaw, "ActorSkill.globalRange(direct)", &globalRange);
-                    }
-
-                    LOG(LOG_LEVEL_INFO,
-                        "[AtkRange] FPTemplate native=%p min@0x%X=%d(%.4f) type@0x%X=%d payload@0x%X=%d(asRange=%.4f)",
-                        (void*)fpTemplateNative,
-                        tpMinOffset,
-                        tpMinDistance, minDist,
-                        tpMaxTypeOffset,
-                        tpMaxDistanceType,
-                        tpMaxDistOffset,
-                        tpPayload, payloadAsRange);
-
-                    float computedRange = -1.0f;
-                    if (tpMaxDistanceType == 1) {
-                        // type=1 时，payload 是模式值：1=baseRange，2=max(baseRange, globalRange)
-                        if (tpPayload == 1 && isReasonableRange(baseRange)) {
-                            computedRange = baseRange;
-                        } else if (tpPayload == 2) {
-                            if (isReasonableRange(baseRange) && isReasonableRange(globalRange)) {
-                                computedRange = std::max(baseRange, globalRange);
-                            } else if (isReasonableRange(baseRange)) {
-                                computedRange = baseRange;
-                            } else if (isReasonableRange(globalRange)) {
-                                computedRange = globalRange;
-                            }
-                        }
-                    } else if (tpMaxDistanceType == 2) {
-                        if (isReasonableRange(payloadAsRange)) {
-                            computedRange = payloadAsRange;
-                        }
-                    } else if (tpMaxDistanceType == 3 &&
-                               isReasonableRange(baseRange) &&
-                               isNonNegativeRange(payloadAsRange)) {
-                        computedRange = baseRange + payloadAsRange;
-                    }
-
-                    if (isReasonableRange(computedRange)) {
-                        LOG(LOG_LEVEL_INFO,
-                            "[AtkRange] FPTemplate 公式命中: base=%.4f global=%.4f type=%d payload=%d(asRange=%.4f) -> %.4f",
-                            baseRange,
-                            globalRange,
-                            tpMaxDistanceType,
-                            tpPayload,
-                            payloadAsRange,
-                            computedRange);
-                        return computedRange;
-                    }
-                }
-            }
-        }
+    // fallback _configMaxRange
+    if (tryDecodeFix64Field(pActorSkill, s_configMaxRangeOffset, "ActorSkill._configMaxRange", &range)) {
+        return range;
     }
 
-    // ── 6. 兜底: get_minSearchRange (旧方案，作为最终保底) ──
-    // IDA: return *(*(this+0x18) + 0x48), 返回 Fix64
-    typedef int64_t (*FnGetMinSearchRange)(void*);
-    static FnGetMinSearchRange s_getMinSearchRange = nullptr;
-    if (!s_getMinSearchRange) {
-        s_getMinSearchRange = (FnGetMinSearchRange)m_pfunctionInfo->GetMethodFun(
+    LOG(LOG_LEVEL_WARN, "[AtkRange] _maxRange 和 _configMaxRange 均无法读取");
+    return -1.0f;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// computeSkillMaxRange — 模拟 IDA sub_55EB554 的技能最大施法距离计算
+//
+// 原始逻辑:
+//   ActorSkill → GetSkillOperateResObject → GetFPTemplate
+//   根据 FPTemplate 的 iTPMaxDistanceType(case 1/2/3) 分支计算:
+//     case 1: payload=1 → baseRange(invoke_FE_TN75)
+//             payload=2 → max(baseRange, globalRange)
+//     case 2: MaxDist(sub_88FAE5C) → int / 10000.0
+//     case 3: baseRange + MaxDist
+//     default: 0
+// ═══════════════════════════════════════════════════════════════════════════════
+
+float lol::FEVisi::computeSkillMaxRange(void* pActorSkill) {
+    if (!pActorSkill || !IsReadableMemory(pActorSkill, 0xC0)) return -1.0f;
+
+    // ── 1. ActorSkill → GetSkillOperateResObject ──
+    typedef void* (*FnGetObj)(void*);
+    static FnGetObj s_getSkillOperate = nullptr;
+    static bool s_methodInit = false;
+    if (!s_methodInit) {
+        s_methodInit = true;
+        s_getSkillOperate = (FnGetObj)m_pfunctionInfo->GetMethodFun(
                 "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
-                "get_minSearchRange");
-        LOG(LOG_LEVEL_INFO, "[AtkRange] get_minSearchRange resolved: %p",
-            (void*)s_getMinSearchRange);
+                "ActorSkill", "FrameEngine.Logic.ActorSkill",
+                "GetSkillOperateResObject");
     }
+    void* pSkillOperate = s_getSkillOperate ? s_getSkillOperate(pActorSkill) : nullptr;
+    if (!pSkillOperate || !IsReadableMemory(pSkillOperate, 0x40)) return -1.0f;
 
-    int64_t minSearchRangeFix64 = 0;
-    if (s_getMinSearchRange) {
-        minSearchRangeFix64 = s_getMinSearchRange(pSkillMgr);
+    // ── 2. SkillOperateResObject → GetFPTemplate ──
+    static FnGetObj s_getFPTemplate = nullptr;
+    static bool s_fpInit = false;
+    if (!s_fpInit) {
+        s_fpInit = true;
+        s_getFPTemplate = (FnGetObj)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "SkillOperateResObject", "FrameEngine.Common.SkillOperateResObject",
+                "GetFPTemplate");
     }
+    void* pFPTemplate = s_getFPTemplate ? s_getFPTemplate(pSkillOperate) : nullptr;
+    if (!pFPTemplate || !IsReadableMemory(pFPTemplate, 0x30)) return -1.0f;
 
-    // ── 7. 如果 minSearchRange 为 0, 尝试通过 native 偏移扫描 ──
-    if (minSearchRangeFix64 == 0) {
-        int64_t nativeData = *(int64_t*)((uint8_t*)pSkillMgr + 0x18);
-        if (nativeData && IsReadableMemory((void*)nativeData, 0x80)) {
-            // 扫描 native data 附近找非零 Fix64 (诊断用)
-            LOG(LOG_LEVEL_INFO, "[AtkRange] minSearchRange=0, 扫描 SkillMgr native:");
-            for (int off = 0x00; off <= 0x70; off += 8) {
-                uint64_t val = *(uint64_t*)(nativeData + off);
-                if (val != 0) {
-                    float decoded = DecoderFix64(val);
-                    LOG(LOG_LEVEL_INFO, "[AtkRange]   native+0x%02X = 0x%llX → %.4f",
-                        off, (unsigned long long)val, decoded);
-                }
-            }
+    // ── 3. 获取 FPTemplate 的 native 数据指针 ──
+    static uint32_t s_instanceOffset = INVALID_OFFSET;
+    static bool s_instanceInit = false;
+    if (!s_instanceInit) {
+        s_instanceInit = true;
+        s_instanceOffset = GetFieldOffsetFromObject(pFPTemplate, "InstanceLongValue");
+        if (s_instanceOffset == INVALID_OFFSET)
+            s_instanceOffset = GetFieldOffsetFromObject(pFPTemplate, "__InstanceLongValue");
+        if (s_instanceOffset == INVALID_OFFSET)
+            s_instanceOffset = GetFieldOffsetFromObject(pFPTemplate, "Instance");
+        if (s_instanceOffset == INVALID_OFFSET)
+            s_instanceOffset = GetFieldOffsetFromObject(pFPTemplate, "__Instance");
+        LOG(LOG_LEVEL_INFO, "[SkillRange] FPTemplate Instance offset=0x%X", s_instanceOffset);
+    }
+    if (s_instanceOffset == INVALID_OFFSET) return -1.0f;
+
+    auto* nativePtrAddr = reinterpret_cast<uint8_t*>(pFPTemplate) + s_instanceOffset;
+    if (!IsReadableMemory(nativePtrAddr, sizeof(int64_t))) return -1.0f;
+    int64_t fpNative = *reinterpret_cast<int64_t*>(nativePtrAddr);
+    if (!fpNative || !IsReadableMemory((void*)fpNative, 0x28)) return -1.0f;
+
+    // ── 4. 从 LayoutDump 获取 native 字段偏移 (或使用硬编码 fallback) ──
+    static bool s_nativeOffsetInit = false;
+    static uint32_t s_maxDistTypeOff = INVALID_OFFSET;  // iTPMaxDistanceType
+    static uint32_t s_maxDistOff     = INVALID_OFFSET;  // iTPMaxDistance
+
+    if (!s_nativeOffsetInit) {
+        s_nativeOffsetInit = true;
+        auto* layoutDumpClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "LayoutDump", "FrameEngine.Common.LayoutDump");
+        if (layoutDumpClass) {
+            m_pfunctionInfo->il2cpp_runtime_class_init(layoutDumpClass);
+            int32_t typeOff = -1, distOff = -1;
+            if (ReadStaticFieldInt32(layoutDumpClass,
+                    "FrameEngine_Common_FPTemplateResObject_iTPMaxDistanceType_offset",
+                    typeOff) && typeOff >= 0)
+                s_maxDistTypeOff = (uint32_t)typeOff;
+            if (ReadStaticFieldInt32(layoutDumpClass,
+                    "FrameEngine_Common_FPTemplateResObject_iTPMaxDistance_offset",
+                    distOff) && distOff >= 0)
+                s_maxDistOff = (uint32_t)distOff;
         }
-        return -1.0f;
+        LOG(LOG_LEVEL_INFO, "[SkillRange] LayoutDump offsets: type=0x%X dist=0x%X",
+            s_maxDistTypeOff, s_maxDistOff);
     }
 
-    minSearchRange = DecoderFix64(minSearchRangeFix64);
+    // sub_88FB1CC: FPTemplate → native+0x20 → iTPMaxDistanceType
+    uint32_t typeOff = s_maxDistTypeOff != INVALID_OFFSET ? s_maxDistTypeOff : 0x20;
+    // sub_88FAF04/sub_88FAE5C: FPTemplate → native+0x24 → iTPMaxDistance
+    uint32_t distOff = s_maxDistOff != INVALID_OFFSET ? s_maxDistOff : 0x24;
 
-    // 合理性校验
-    if (!isReasonableRange(minSearchRange)) {
-        LOG(LOG_LEVEL_WARN, "[AtkRange] 范围异常: Fix64=0x%llX → %.2f",
-            (unsigned long long)minSearchRangeFix64, minSearchRange);
-        return -1.0f;
+    int32_t maxDistType = *reinterpret_cast<int32_t*>(fpNative + typeOff);
+    int32_t maxDistRaw  = *reinterpret_cast<int32_t*>(fpNative + distOff);
+    float maxDist = (float)maxDistRaw / 10000.0f;
+
+    // ── 5. 获取 baseRange (invoke_FE_TN75 → ActorSkill_GetCurRangeSync) ──
+    //    读取 ActorSkill._maxRange 或 _configMaxRange (Fix64)
+    static uint32_t s_maxRangeOff = INVALID_OFFSET;
+    static uint32_t s_configMaxRangeOff = INVALID_OFFSET;
+    static bool s_rangeFieldInit = false;
+    if (!s_rangeFieldInit) {
+        s_rangeFieldInit = true;
+        s_maxRangeOff = GetFieldOffsetFromObject(pActorSkill, "_maxRange");
+        if (s_maxRangeOff == INVALID_OFFSET)
+            s_maxRangeOff = GetFieldOffsetFromObject(pActorSkill, "maxRange");
+        s_configMaxRangeOff = GetFieldOffsetFromObject(pActorSkill, "_configMaxRange");
+        if (s_configMaxRangeOff == INVALID_OFFSET)
+            s_configMaxRangeOff = GetFieldOffsetFromObject(pActorSkill, "configMaxRange");
+    }
+
+    auto readFix64AsFloat = [&](void* obj, uint32_t offset) -> float {
+        if (!obj || offset == INVALID_OFFSET) return -1.0f;
+        auto* ptr = reinterpret_cast<uint8_t*>(obj) + offset;
+        if (!IsReadableMemory(ptr, sizeof(uint64_t))) return -1.0f;
+        uint64_t raw = *reinterpret_cast<uint64_t*>(ptr);
+        if (raw == 0) return -1.0f;
+        return DecoderFix64(raw);
+    };
+
+    float baseRange = readFix64AsFloat(pActorSkill, s_maxRangeOff);
+    if (baseRange < 0.0f)
+        baseRange = readFix64AsFloat(pActorSkill, s_configMaxRangeOff);
+
+    // ── 6. 按 iTPMaxDistanceType 分支计算 (模拟 sub_55EB554 switch) ──
+    float result = -1.0f;
+
+    switch (maxDistType) {
+        case 1: {
+            // payload (iTPMaxDistance) 决定模式
+            if (maxDistRaw == 2) {
+                // case 1, payload=2: max(baseRange, globalRange)
+                // globalRange 来自 sub_A49CDE8 (Fix64 静态值)
+                float globalRange = -1.0f;
+                typedef int64_t (*FnGetGlobalRange)();
+                static FnGetGlobalRange s_getGlobalRange = nullptr;
+                if (!s_getGlobalRange)
+                    s_getGlobalRange = (FnGetGlobalRange)m_pfunctionInfo->GetMethodFun(
+                            "ilbil2cpp.so", "Assembly-CSharp.dll",
+                            "ActorSkill", "FrameEngine.Logic.ActorSkill",
+                            "get_globalNormalAtkRange");
+                if (s_getGlobalRange) {
+                    int64_t globalRaw = s_getGlobalRange();
+                    if (globalRaw != 0) globalRange = DecoderFix64((uint64_t)globalRaw);
+                }
+                if (baseRange >= 0.0f && globalRange >= 0.0f)
+                    result = std::max(baseRange, globalRange);
+                else if (baseRange >= 0.0f)
+                    result = baseRange;
+                else if (globalRange >= 0.0f)
+                    result = globalRange;
+            } else if (maxDistRaw == 1) {
+                // case 1, payload=1: 直接使用 baseRange
+                result = baseRange;
+            }
+            break;
+        }
+        case 2:
+            // case 2: MaxDist / 10000.0
+            result = maxDist;
+            break;
+        case 3:
+            // case 3: baseRange + MaxDist / 10000.0
+            if (baseRange >= 0.0f)
+                result = baseRange + maxDist;
+            break;
+        default:
+            break;
     }
 
     LOG(LOG_LEVEL_INFO,
-        "[AtkRange] fallback get_minSearchRange 命中: raw=0x%llX -> %.4f",
-        (unsigned long long)minSearchRangeFix64, minSearchRange);
-    return minSearchRange;
+        "[SkillRange] type=%d payload=%d maxDist=%.4f baseRange=%.4f → result=%.4f",
+        maxDistType, maxDistRaw, maxDist, baseRange, result);
+
+    return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
