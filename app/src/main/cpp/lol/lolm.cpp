@@ -857,11 +857,6 @@ void *lol::FEVisi::updateMiniMapData() {
                     }
                 }
             }
-            // ── 普攻最大范围 ──
-            info.atkRange = -1.0f;
-            if (actor && IsReadableMemory(actor, sizeof(void*))) {
-                info.atkRange = getNormalAttackMaxRange(actor);
-            }
 
             info.worldPos    = worldPos;
             info.hasWorldPos = hasWorldPos;
@@ -875,6 +870,26 @@ void *lol::FEVisi::updateMiniMapData() {
                     info.screenY      = sy;
                     info.hasScreenPos = true;
                 }
+            }
+
+            // ── 所有英雄: 获取普攻有效范围 ──
+            info.atkRange = -1.0f;
+            if (actor && IsReadableMemory(actor, sizeof(void*))) {
+                float skillRange = getMySkillValidTargetRange(actor);
+                if (skillRange > 0.0f) info.atkRange = skillRange;
+            }
+
+            // ── 己方英雄: 额外记录坐标到 myXxx 字段 ──
+            if ((MiniMapIconType)iconType == MiniMapIconType_MyTeamHero
+                && actor && IsReadableMemory(actor, sizeof(void*))
+                && m_miniMapData.mySkillRange < 0.0f) {
+                m_miniMapData.myWorldPos = worldPos;
+                if (info.hasScreenPos) {
+                    m_miniMapData.myScreenX     = info.screenX;
+                    m_miniMapData.myScreenY     = info.screenY;
+                    m_miniMapData.hasMyScreenPos = true;
+                }
+                if (info.atkRange > 0.0f) m_miniMapData.mySkillRange = info.atkRange;
             }
 
             // (高频采集: 日志由 printMiniMapData 定期输出, 此处不逐帧打印)
@@ -966,316 +981,6 @@ bool lol::FEVisi::IsReadableMemory(const void* ptr, size_t size) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// getNormalAttackMaxRange — 获取普通攻击最大施法距离
-//
-// IDA FE_TN75 (ActorSkill_GetCurRangeSync) 分析结论:
-//   native 实例 +0x58 / +0xB8 存储当前范围 (Fix64)
-//   托管层对应字段: _maxRange / _configMaxRange
-//   优先读取 _maxRange，fallback 读取 _configMaxRange
-// ═══════════════════════════════════════════════════════════════════════════════
-
-float lol::FEVisi::getNormalAttackMaxRange(void* actorVisi) {
-    if (!actorVisi) return -1.0f;
-
-    auto isReasonableRange = [](float value) -> bool {
-        return value >= 0.5f && value <= 30.0f;
-    };
-
-    auto tryDecodeFix64Field = [&](void* object, uint32_t offset,
-                                   const char* tag, float* outValue) -> bool {
-        if (!object || offset == INVALID_OFFSET || outValue == nullptr) return false;
-        auto* fieldPtr = reinterpret_cast<uint8_t*>(object) + offset;
-        if (!IsReadableMemory(fieldPtr, sizeof(uint64_t))) return false;
-
-        uint64_t raw = *reinterpret_cast<uint64_t*>(fieldPtr);
-        if (raw == 0) return false;
-
-        float value = DecoderFix64(raw);
-        if (!isReasonableRange(value)) {
-            LOG(LOG_LEVEL_WARN,
-                "[AtkRange] %s 解码异常: off=0x%X raw=0x%llX -> %.4f",
-                tag, offset, (unsigned long long)raw, value);
-            return false;
-        }
-
-        *outValue = value;
-        LOG(LOG_LEVEL_INFO,
-            "[AtkRange] %s 命中: off=0x%X raw=0x%llX -> %.4f",
-            tag, offset, (unsigned long long)raw, value);
-        return true;
-    };
-
-    // ── 1. BattleActorVisi → get_actor() → BattleActor ──
-    typedef void* (*FnGetActor)(void*);
-    static FnGetActor s_getLogicActor = nullptr;
-    if (!s_getLogicActor) {
-        s_getLogicActor = (FnGetActor)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
-                "get_actor");
-    }
-    if (!s_getLogicActor) return -1.0f;
-
-    void* pBattleActor = s_getLogicActor(actorVisi);
-    if (!pBattleActor || !IsReadableMemory(pBattleActor, 0x20)) return -1.0f;
-
-    // ── 2. BattleActor → get_skillMgr() → ActorComponentSkillMgr ──
-    typedef void* (*FnGetSkillMgr)(void*);
-    static FnGetSkillMgr s_getSkillMgr = nullptr;
-    if (!s_getSkillMgr) {
-        s_getSkillMgr = (FnGetSkillMgr)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "BattleActor", "FrameEngine.Logic.BattleActor",
-                "get_skillMgr");
-    }
-    if (!s_getSkillMgr) return -1.0f;
-
-    void* pSkillMgr = s_getSkillMgr(pBattleActor);
-    if (!pSkillMgr || !IsReadableMemory(pSkillMgr, 0x20)) return -1.0f;
-
-    // ── 3. SkillMgr → GetNormalAttackSkill() / get_attackSkill() ──
-    typedef void* (*FnGetActorSkill)(void*);
-    static FnGetActorSkill s_getNormalAttackSkill = nullptr;
-    static FnGetActorSkill s_getAttackSkill = nullptr;
-    static bool s_attackSkillMethodInit = false;
-    if (!s_attackSkillMethodInit) {
-        s_attackSkillMethodInit = true;
-        s_getNormalAttackSkill = (FnGetActorSkill)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
-                "GetNormalAttackSkill");
-        s_getAttackSkill = (FnGetActorSkill)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
-                "get_attackSkill");
-        LOG(LOG_LEVEL_INFO,
-            "[AtkRange] GetNormalAttackSkill=%p get_attackSkill=%p",
-            (void*)s_getNormalAttackSkill, (void*)s_getAttackSkill);
-    }
-
-    void* pActorSkill = nullptr;
-    if (s_getNormalAttackSkill) {
-        pActorSkill = s_getNormalAttackSkill(pSkillMgr);
-    }
-    if (!pActorSkill && s_getAttackSkill) {
-        pActorSkill = s_getAttackSkill(pSkillMgr);
-    }
-    if (!pActorSkill || !IsReadableMemory(pActorSkill, 0xC0)) return -1.0f;
-
-    // ── 4. 读取 ActorSkill._maxRange / _configMaxRange ──
-    static bool s_fieldInit = false;
-    static uint32_t s_maxRangeOffset = INVALID_OFFSET;
-    static uint32_t s_configMaxRangeOffset = INVALID_OFFSET;
-    if (!s_fieldInit) {
-        s_fieldInit = true;
-        s_maxRangeOffset = GetFieldOffsetFromObject(pActorSkill, "_maxRange");
-        if (s_maxRangeOffset == INVALID_OFFSET)
-            s_maxRangeOffset = GetFieldOffsetFromObject(pActorSkill, "maxRange");
-        s_configMaxRangeOffset = GetFieldOffsetFromObject(pActorSkill, "_configMaxRange");
-        if (s_configMaxRangeOffset == INVALID_OFFSET)
-            s_configMaxRangeOffset = GetFieldOffsetFromObject(pActorSkill, "configMaxRange");
-
-        LOG(LOG_LEVEL_INFO,
-            "[AtkRange] ActorSkill field offsets: _maxRange=0x%X _configMaxRange=0x%X",
-            s_maxRangeOffset, s_configMaxRangeOffset);
-    }
-
-    // 优先 _maxRange
-    float range = -1.0f;
-    if (tryDecodeFix64Field(pActorSkill, s_maxRangeOffset, "ActorSkill._maxRange", &range)) {
-        return range;
-    }
-
-    // fallback _configMaxRange
-    if (tryDecodeFix64Field(pActorSkill, s_configMaxRangeOffset, "ActorSkill._configMaxRange", &range)) {
-        return range;
-    }
-
-    LOG(LOG_LEVEL_WARN, "[AtkRange] _maxRange 和 _configMaxRange 均无法读取");
-    return -1.0f;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// computeSkillMaxRange — 模拟 IDA sub_55EB554 的技能最大施法距离计算
-//
-// 原始逻辑:
-//   ActorSkill → GetSkillOperateResObject → GetFPTemplate
-//   根据 FPTemplate 的 iTPMaxDistanceType(case 1/2/3) 分支计算:
-//     case 1: payload=1 → baseRange(invoke_FE_TN75)
-//             payload=2 → max(baseRange, globalRange)
-//     case 2: MaxDist(sub_88FAE5C) → int / 10000.0
-//     case 3: baseRange + MaxDist
-//     default: 0
-// ═══════════════════════════════════════════════════════════════════════════════
-
-float lol::FEVisi::computeSkillMaxRange(void* pActorSkill) {
-    if (!pActorSkill || !IsReadableMemory(pActorSkill, 0xC0)) return -1.0f;
-
-    // ── 1. ActorSkill → GetSkillOperateResObject ──
-    typedef void* (*FnGetObj)(void*);
-    static FnGetObj s_getSkillOperate = nullptr;
-    static bool s_methodInit = false;
-    if (!s_methodInit) {
-        s_methodInit = true;
-        s_getSkillOperate = (FnGetObj)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "ActorSkill", "FrameEngine.Logic.ActorSkill",
-                "GetSkillOperateResObject");
-    }
-    void* pSkillOperate = s_getSkillOperate ? s_getSkillOperate(pActorSkill) : nullptr;
-    if (!pSkillOperate || !IsReadableMemory(pSkillOperate, 0x40)) return -1.0f;
-
-    // ── 2. SkillOperateResObject → GetFPTemplate ──
-    static FnGetObj s_getFPTemplate = nullptr;
-    static bool s_fpInit = false;
-    if (!s_fpInit) {
-        s_fpInit = true;
-        s_getFPTemplate = (FnGetObj)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "SkillOperateResObject", "FrameEngine.Common.SkillOperateResObject",
-                "GetFPTemplate");
-    }
-    void* pFPTemplate = s_getFPTemplate ? s_getFPTemplate(pSkillOperate) : nullptr;
-    if (!pFPTemplate || !IsReadableMemory(pFPTemplate, 0x30)) return -1.0f;
-
-    // ── 3. 获取 FPTemplate 的 native 数据指针 ──
-    static uint32_t s_instanceOffset = INVALID_OFFSET;
-    static bool s_instanceInit = false;
-    if (!s_instanceInit) {
-        s_instanceInit = true;
-        s_instanceOffset = GetFieldOffsetFromObject(pFPTemplate, "InstanceLongValue");
-        if (s_instanceOffset == INVALID_OFFSET)
-            s_instanceOffset = GetFieldOffsetFromObject(pFPTemplate, "__InstanceLongValue");
-        if (s_instanceOffset == INVALID_OFFSET)
-            s_instanceOffset = GetFieldOffsetFromObject(pFPTemplate, "Instance");
-        if (s_instanceOffset == INVALID_OFFSET)
-            s_instanceOffset = GetFieldOffsetFromObject(pFPTemplate, "__Instance");
-        LOG(LOG_LEVEL_INFO, "[SkillRange] FPTemplate Instance offset=0x%X", s_instanceOffset);
-    }
-    if (s_instanceOffset == INVALID_OFFSET) return -1.0f;
-
-    auto* nativePtrAddr = reinterpret_cast<uint8_t*>(pFPTemplate) + s_instanceOffset;
-    if (!IsReadableMemory(nativePtrAddr, sizeof(int64_t))) return -1.0f;
-    int64_t fpNative = *reinterpret_cast<int64_t*>(nativePtrAddr);
-    if (!fpNative || !IsReadableMemory((void*)fpNative, 0x28)) return -1.0f;
-
-    // ── 4. 从 LayoutDump 获取 native 字段偏移 (或使用硬编码 fallback) ──
-    static bool s_nativeOffsetInit = false;
-    static uint32_t s_maxDistTypeOff = INVALID_OFFSET;  // iTPMaxDistanceType
-    static uint32_t s_maxDistOff     = INVALID_OFFSET;  // iTPMaxDistance
-
-    if (!s_nativeOffsetInit) {
-        s_nativeOffsetInit = true;
-        auto* layoutDumpClass = m_pfunctionInfo->FindClassByName(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "LayoutDump", "FrameEngine.Common.LayoutDump");
-        if (layoutDumpClass) {
-            m_pfunctionInfo->il2cpp_runtime_class_init(layoutDumpClass);
-            int32_t typeOff = -1, distOff = -1;
-            if (ReadStaticFieldInt32(layoutDumpClass,
-                    "FrameEngine_Common_FPTemplateResObject_iTPMaxDistanceType_offset",
-                    typeOff) && typeOff >= 0)
-                s_maxDistTypeOff = (uint32_t)typeOff;
-            if (ReadStaticFieldInt32(layoutDumpClass,
-                    "FrameEngine_Common_FPTemplateResObject_iTPMaxDistance_offset",
-                    distOff) && distOff >= 0)
-                s_maxDistOff = (uint32_t)distOff;
-        }
-        LOG(LOG_LEVEL_INFO, "[SkillRange] LayoutDump offsets: type=0x%X dist=0x%X",
-            s_maxDistTypeOff, s_maxDistOff);
-    }
-
-    // sub_88FB1CC: FPTemplate → native+0x20 → iTPMaxDistanceType
-    uint32_t typeOff = s_maxDistTypeOff != INVALID_OFFSET ? s_maxDistTypeOff : 0x20;
-    // sub_88FAF04/sub_88FAE5C: FPTemplate → native+0x24 → iTPMaxDistance
-    uint32_t distOff = s_maxDistOff != INVALID_OFFSET ? s_maxDistOff : 0x24;
-
-    int32_t maxDistType = *reinterpret_cast<int32_t*>(fpNative + typeOff);
-    int32_t maxDistRaw  = *reinterpret_cast<int32_t*>(fpNative + distOff);
-    float maxDist = (float)maxDistRaw / 10000.0f;
-
-    // ── 5. 获取 baseRange (invoke_FE_TN75 → ActorSkill_GetCurRangeSync) ──
-    //    读取 ActorSkill._maxRange 或 _configMaxRange (Fix64)
-    static uint32_t s_maxRangeOff = INVALID_OFFSET;
-    static uint32_t s_configMaxRangeOff = INVALID_OFFSET;
-    static bool s_rangeFieldInit = false;
-    if (!s_rangeFieldInit) {
-        s_rangeFieldInit = true;
-        s_maxRangeOff = GetFieldOffsetFromObject(pActorSkill, "_maxRange");
-        if (s_maxRangeOff == INVALID_OFFSET)
-            s_maxRangeOff = GetFieldOffsetFromObject(pActorSkill, "maxRange");
-        s_configMaxRangeOff = GetFieldOffsetFromObject(pActorSkill, "_configMaxRange");
-        if (s_configMaxRangeOff == INVALID_OFFSET)
-            s_configMaxRangeOff = GetFieldOffsetFromObject(pActorSkill, "configMaxRange");
-    }
-
-    auto readFix64AsFloat = [&](void* obj, uint32_t offset) -> float {
-        if (!obj || offset == INVALID_OFFSET) return -1.0f;
-        auto* ptr = reinterpret_cast<uint8_t*>(obj) + offset;
-        if (!IsReadableMemory(ptr, sizeof(uint64_t))) return -1.0f;
-        uint64_t raw = *reinterpret_cast<uint64_t*>(ptr);
-        if (raw == 0) return -1.0f;
-        return DecoderFix64(raw);
-    };
-
-    float baseRange = readFix64AsFloat(pActorSkill, s_maxRangeOff);
-    if (baseRange < 0.0f)
-        baseRange = readFix64AsFloat(pActorSkill, s_configMaxRangeOff);
-
-    // ── 6. 按 iTPMaxDistanceType 分支计算 (模拟 sub_55EB554 switch) ──
-    float result = -1.0f;
-
-    switch (maxDistType) {
-        case 1: {
-            // payload (iTPMaxDistance) 决定模式
-            if (maxDistRaw == 2) {
-                // case 1, payload=2: max(baseRange, globalRange)
-                // globalRange 来自 sub_A49CDE8 (Fix64 静态值)
-                float globalRange = -1.0f;
-                typedef int64_t (*FnGetGlobalRange)();
-                static FnGetGlobalRange s_getGlobalRange = nullptr;
-                if (!s_getGlobalRange)
-                    s_getGlobalRange = (FnGetGlobalRange)m_pfunctionInfo->GetMethodFun(
-                            "ilbil2cpp.so", "Assembly-CSharp.dll",
-                            "ActorSkill", "FrameEngine.Logic.ActorSkill",
-                            "get_globalNormalAtkRange");
-                if (s_getGlobalRange) {
-                    int64_t globalRaw = s_getGlobalRange();
-                    if (globalRaw != 0) globalRange = DecoderFix64((uint64_t)globalRaw);
-                }
-                if (baseRange >= 0.0f && globalRange >= 0.0f)
-                    result = std::max(baseRange, globalRange);
-                else if (baseRange >= 0.0f)
-                    result = baseRange;
-                else if (globalRange >= 0.0f)
-                    result = globalRange;
-            } else if (maxDistRaw == 1) {
-                // case 1, payload=1: 直接使用 baseRange
-                result = baseRange;
-            }
-            break;
-        }
-        case 2:
-            // case 2: MaxDist / 10000.0
-            result = maxDist;
-            break;
-        case 3:
-            // case 3: baseRange + MaxDist / 10000.0
-            if (baseRange >= 0.0f)
-                result = baseRange + maxDist;
-            break;
-        default:
-            break;
-    }
-
-    LOG(LOG_LEVEL_INFO,
-        "[SkillRange] type=%d payload=%d maxDist=%.4f baseRange=%.4f → result=%.4f",
-        maxDistType, maxDistRaw, maxDist, baseRange, result);
-
-    return result;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // readIl2CppString — 将 IL2CPP 托管 System.String 对象转为 C++ std::string (UTF-8)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1287,4 +992,82 @@ std::string lol::FEVisi::readIl2CppString(void* pIl2CppString) {
     }
     return m_pfunctionInfo->il2cpp_Il2CppString_toCString(
             static_cast<const Il2CppString*>(pIl2CppString));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// getMySkillValidTargetRange — 获取己方英雄当前技能的有效目标范围
+//
+// 调用链: BattleActorVisi → get_actor() → BattleActor
+//         → get_auxComponent() → ActorComponentAuxiliary
+//         → get_targetSystem() → TargetSystem
+//         → GetSkillValidTargetRange(currentActiveSkill) → Fix64
+//
+// IDA RVA: GetSkillValidTargetRange = 0x46133a4
+//          get_targetSystem         = 0x84972fc
+//          get_auxComponent         = 0x86024ec / 0x4f6d73c
+//          get_currentActiveList    = 0x84a6f40
+// ═══════════════════════════════════════════════════════════════════════════════
+
+float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
+    if (!actorVisi) return -1.0f;
+
+    // 1. BattleActorVisi → get_actor() → BattleActor
+    typedef void* (*FnGetActor)(void*);
+    static FnGetActor s_getActor = nullptr;
+    if (!s_getActor) {
+        s_getActor = (FnGetActor)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
+                "get_actor");
+    }
+    if (!s_getActor) return -1.0f;
+    void* pBattleActor = s_getActor(actorVisi);
+    if (!pBattleActor || !IsReadableMemory(pBattleActor, 0x20)) return -1.0f;
+
+    // 2. BattleActor → get_skillMgr()
+    typedef void* (*FnGetSkillMgr)(void*);
+    static FnGetSkillMgr s_getSkillMgr = nullptr;
+    if (!s_getSkillMgr) {
+        s_getSkillMgr = (FnGetSkillMgr)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActor", "FrameEngine.Logic.BattleActor",
+                "get_skillMgr");
+    }
+    if (!s_getSkillMgr) return -1.0f;
+    void* pSkillMgr = s_getSkillMgr(pBattleActor);
+    if (!pSkillMgr || !IsReadableMemory(pSkillMgr, 0x60)) return -1.0f;
+
+    // 3. GetNormalAttackSkill()
+    typedef void* (*FnGetSkill)(void*);
+    static FnGetSkill s_getNormalAttackSkill = nullptr;
+    if (!s_getNormalAttackSkill) {
+        s_getNormalAttackSkill = (FnGetSkill)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
+                "GetNormalAttackSkill");
+    }
+    if (!s_getNormalAttackSkill) return -1.0f;
+    void* pSkill = s_getNormalAttackSkill(pSkillMgr);
+    if (!pSkill || !IsReadableMemory(pSkill, 0xC0)) return -1.0f;
+
+    // 4. ActorSkill.get_curRange() → Fix64
+    typedef int64_t (*FnGetCurRange)(void*, void*);
+    static FnGetCurRange s_getCurRange = nullptr;
+    if (!s_getCurRange) {
+        s_getCurRange = (FnGetCurRange)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorSkill", "FrameEngine.Logic.ActorSkill",
+                "get_curRange");
+        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved get_curRange=%p", (void*)s_getCurRange);
+    }
+    if (!s_getCurRange) { LOG(LOG_LEVEL_ERROR, "[SkillRange] get_curRange null"); return -1.0f; }
+
+    LOG(LOG_LEVEL_INFO, "[SkillRange] calling get_curRange(skill=%p)...", pSkill);
+    int64_t rangeFix64 = s_getCurRange(pSkill, nullptr);
+    LOG(LOG_LEVEL_INFO, "[SkillRange] rangeFix64=0x%llX (%lld)", (unsigned long long)rangeFix64, (long long)rangeFix64);
+    if (rangeFix64 <= 0) return -1.0f;
+
+    float result = DecoderFix64((uint64_t)rangeFix64);
+    LOG(LOG_LEVEL_INFO, "[SkillRange] ✓ range=%.4f", result);
+    return result;
 }

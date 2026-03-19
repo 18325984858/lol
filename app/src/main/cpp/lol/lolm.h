@@ -60,9 +60,20 @@ namespace lol {
         std::vector<MiniMapEnemyHeroInfo> enemyHeroes;  ///< 敌方英雄列表
         std::vector<MiniMapWardInfo>      wards;        ///< 眼/守卫列表
 
+        // 己方英雄当前技能有效范围
+        float       mySkillRange;    ///< 当前技能有效范围(float)，-1 无效
+        UnityVector3 myWorldPos;     ///< 己方英雄世界坐标
+        float       myScreenX;       ///< 己方屏幕 X
+        float       myScreenY;       ///< 己方屏幕 Y
+        bool        hasMyScreenPos;  ///< 己方屏幕坐标是否有效
+
         void clear() {
             enemyHeroes.clear();
             wards.clear();
+            mySkillRange = -1.0f;
+            myWorldPos = {0,0,0};
+            myScreenX = 0; myScreenY = 0;
+            hasMyScreenPos = false;
         }
     };
 
@@ -221,29 +232,17 @@ namespace lol {
          */
         void* getActorAttribute(void* actorVisi);
 
-    public:
         /**
-         * @brief  获取普通攻击的最大施法距离（浮点值）
+         * @brief  获取己方英雄当前技能的有效目标范围
          * @param  actorVisi  BattleActorVisi 对象指针（己方英雄）
-         * @return 普攻最大范围(float)，失败返回 -1.0f
+         * @return 有效范围(float)，失败返回 -1.0f
          *
          * @details 链路: BattleActorVisi → get_actor() → BattleActor
-         *          → get_skillMgr() → get_attackSkill() → GetSkillOperateResObject()
-         *          → GetMaxCastDist_Fix64() → DecoderFix64()
+         *          → get_auxComponent() → ActorComponentAuxiliary
+         *          → get_targetSystem() → TargetSystem
+         *          → GetSkillValidTargetRange(currentSkill) → Fix64 → float
          */
-        float getNormalAttackMaxRange(void* actorVisi);
-
-        /**
-         * @brief  计算技能最大施法距离（模拟 sub_55EB554）
-         * @param  pActorSkill  ActorSkill 托管对象指针
-         * @return 技能最大范围(float)，失败返回 -1.0f
-         *
-         * @details 根据 FPTemplate 的 iTPMaxDistanceType 分支:
-         *   case 1: payload=1 → baseRange; payload=2 → max(baseRange, globalRange)
-         *   case 2: MaxDist / 10000.0
-         *   case 3: baseRange + MaxDist / 10000.0
-         */
-        float computeSkillMaxRange(void* pActorSkill);
+        float getMySkillValidTargetRange(void* actorVisi);
 
     private:
 

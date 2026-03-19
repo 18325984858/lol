@@ -59,8 +59,9 @@ ImVec2 GameOverlay::xzToMinimap(float wx, float wz,
 
 void GameOverlay::drawOverlay(const lol::MiniMapData& data, bool inBattle) {
     if (inBattle) {
-        if (m_enableESP)   drawESP(data);
-        if (m_enableRadar) drawRadar(data);
+        if (m_enableESP)        drawESP(data);
+        if (m_enableRadar)      drawRadar(data);
+        if (m_enableSkillRange) drawSkillRange(data);
     }
     // Game Info 最后绘制，确保它在最上层可接收触摸/拖拽
     if (m_enableInfo) drawInfoPanel(data, inBattle);
@@ -113,6 +114,8 @@ void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
         ImGui::Checkbox("HeroInfo",  &m_enableHeroInfo);
         ImGui::SameLine();
         ImGui::Checkbox("Wards",     &m_enableWards);
+        ImGui::SameLine();
+        ImGui::Checkbox("SkillRng",  &m_enableSkillRange);
         ImGui::Separator();
 
         // ── 敌方英雄信息 ──
@@ -460,6 +463,52 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
 
     ImGui::End();
     ImGui::PopStyleVar(2);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// drawSkillRange — 绘制己方英雄当前技能有效施法范围圆圈
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void GameOverlay::drawSkillRange(const lol::MiniMapData& data) {
+    ImGuiIO& io = ImGui::GetIO();
+    const float screenH = io.DisplaySize.y;
+    const float screenW = io.DisplaySize.x;
+    auto* dl = ImGui::GetForegroundDrawList();
+
+    // atkRange 值是游戏内部距离单位，需要转换为屏幕像素
+    // 通过经验值: 游戏距离 1.0 ≈ 屏幕约 15-25 像素 (取决于相机缩放)
+    // atkRange 的典型值: 普攻约 2-8 (游戏距离单位)
+    // 如果值 > 100 说明是万分比格式，需要先 /10000
+    float pixelsPerUnit = 60.0f;
+
+    for (size_t i = 0; i < data.enemyHeroes.size(); ++i) {
+        const auto& hero = data.enemyHeroes[i];
+        if (hero.atkRange <= 0.0f || !hero.hasScreenPos) continue;
+
+        float cx = hero.screenX;
+        float cy = screenH - hero.screenY;
+
+        if (cx < -200 || cx > screenW + 200 || cy < -200 || cy > screenH + 200) continue;
+
+        // _maxRange 经 DecoderFix64 后是游戏距离单位 (典型值 2-10)
+        float range = hero.atkRange;
+
+        float radiusPx = range * pixelsPerUnit;
+        if (radiusPx < 10.0f)  radiusPx = 10.0f;
+        if (radiusPx > 400.0f) radiusPx = 400.0f;
+
+        bool isMyTeam = (hero.iconType == 2);
+        ImU32 circleColor = isMyTeam ? IM_COL32(0, 255, 100, 80)  : IM_COL32(255, 60, 60, 80);
+        ImU32 fillColor   = isMyTeam ? IM_COL32(0, 255, 100, 12)  : IM_COL32(255, 60, 60, 12);
+        ImU32 textColor   = isMyTeam ? IM_COL32(0, 255, 100, 200) : IM_COL32(255, 100, 100, 200);
+
+        dl->AddCircle(ImVec2(cx, cy), radiusPx, circleColor, 48, 1.5f);
+        dl->AddCircleFilled(ImVec2(cx, cy), radiusPx, fillColor, 48);
+
+        char label[32];
+        snprintf(label, sizeof(label), "%.1f", hero.atkRange);
+        dl->AddText(ImVec2(cx + radiusPx + 3, cy - 6), textColor, label);
+    }
 }
 
 } // namespace draw
