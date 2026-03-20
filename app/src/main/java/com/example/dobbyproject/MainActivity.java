@@ -47,6 +47,8 @@ import com.example.dobbyproject.databinding.ActivityMainBinding;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.InputStreamReader;
+import java.io.InputStream;
+import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.io.File;
 public class MainActivity extends AppCompatActivity {
@@ -96,6 +98,9 @@ public class MainActivity extends AppCompatActivity {
 
         //修改输入设备权限
         fixInputPermission();
+
+        //部署中文字体到 /data/local/tmp/
+        deployChineseFont();
 
         //全局拷贝 so 到目标程序
         writeFiletoTargetProgram();
@@ -251,6 +256,69 @@ public class MainActivity extends AppCompatActivity {
                 LogUtil.e("[注入流程] 执行 injector 异常: " + e.getMessage(), e);
             }
         }).start();
+    }
+
+    /**
+     * 从 assets 提取 chinese.ttf 到 /data/local/tmp/chinese.ttf
+     */
+    public void deployChineseFont() {
+        String tmpFile = getCacheDir() + "/chinese.ttf";
+        String dstFile = "/data/local/tmp/chinese.ttf";
+
+        // 检查目标是否已存在（避免重复复制）
+        try {
+            Process chk = Runtime.getRuntime().exec("su");
+            DataOutputStream chkOs = new DataOutputStream(chk.getOutputStream());
+            chkOs.writeBytes("test -f " + dstFile + " && echo EXISTS\n");
+            chkOs.writeBytes("exit\n");
+            chkOs.flush();
+            BufferedReader chkReader = new BufferedReader(new InputStreamReader(chk.getInputStream()));
+            String chkLine;
+            boolean exists = false;
+            while ((chkLine = chkReader.readLine()) != null) {
+                if (chkLine.contains("EXISTS")) exists = true;
+            }
+            chk.waitFor();
+            if (exists) {
+                LogUtil.i("[Font] chinese.ttf 已存在于 " + dstFile + "，跳过部署");
+                return;
+            }
+        } catch (Exception ignored) {}
+
+        // 从 assets 提取到 app cache 目录
+        try {
+            InputStream is = getAssets().open("chinese.ttf");
+            FileOutputStream fos = new FileOutputStream(tmpFile);
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = is.read(buf)) > 0) {
+                fos.write(buf, 0, len);
+            }
+            fos.close();
+            is.close();
+            LogUtil.i("[Font] 已从 assets 提取到: " + tmpFile);
+        } catch (Exception e) {
+            LogUtil.e("[Font] 提取 chinese.ttf 失败: " + e.getMessage(), e);
+            return;
+        }
+
+        // 用 su 复制到 /data/local/tmp/
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("cp -f " + tmpFile + " " + dstFile + "\n");
+            os.writeBytes("chmod 644 " + dstFile + "\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            int exitCode = p.waitFor();
+            if (exitCode == 0) {
+                LogUtil.i("[Font] ✓ chinese.ttf 已部署到 " + dstFile);
+            } else {
+                LogUtil.e("[Font] 部署失败，错误码: " + exitCode, null);
+            }
+        } catch (Exception e) {
+            LogUtil.e("[Font] 部署异常: " + e.getMessage(), e);
+        }
     }
 
     public void writeFiletoTargetProgram() {
