@@ -1011,6 +1011,20 @@ std::string lol::FEVisi::readIl2CppString(void* pIl2CppString) {
 float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     if (!actorVisi) return -1.0f;
 
+    auto isReadableManagedObject = [&](void* object) -> bool {
+        if (!object || !IsReadableMemory(object, sizeof(void*))) return false;
+
+        auto* klass = GetObjectKlass(object);
+        if (!klass) return false;
+
+        int32_t instanceSize = m_pfunctionInfo->il2cpp_class_instance_size(klass);
+        if (instanceSize <= 0) {
+            return IsReadableMemory(object, sizeof(void*) * 2);
+        }
+
+        return IsReadableMemory(object, static_cast<size_t>(instanceSize));
+    };
+
     // 1. BattleActorVisi → get_actor() → BattleActor
     typedef void* (*FnGetActor)(void*);
     static FnGetActor s_getActor = nullptr;
@@ -1022,7 +1036,7 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     }
     if (!s_getActor) return -1.0f;
     void* pBattleActor = s_getActor(actorVisi);
-    if (!pBattleActor || !IsReadableMemory(pBattleActor, 0x20)) return -1.0f;
+    if (!isReadableManagedObject(pBattleActor)) return -1.0f;
 
     // 2. BattleActor → get_skillMgr()
     typedef void* (*FnGetSkillMgr)(void*);
@@ -1035,7 +1049,7 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     }
     if (!s_getSkillMgr) return -1.0f;
     void* pSkillMgr = s_getSkillMgr(pBattleActor);
-    if (!pSkillMgr || !IsReadableMemory(pSkillMgr, 0x60)) return -1.0f;
+    if (!isReadableManagedObject(pSkillMgr)) return -1.0f;
 
     // 3. GetNormalAttackSkill()
     typedef void* (*FnGetSkill)(void*);
@@ -1048,7 +1062,7 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     }
     if (!s_getNormalAttackSkill) return -1.0f;
     void* pSkill = s_getNormalAttackSkill(pSkillMgr);
-    if (!pSkill || !IsReadableMemory(pSkill, 0xC0)) return -1.0f;
+    if (!isReadableManagedObject(pSkill)) return -1.0f;
 
     // 4. ActorSkill.get_curRange() → Fix64
     typedef int64_t (*FnGetCurRange)(void*, void*);
@@ -1067,7 +1081,46 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     LOG(LOG_LEVEL_INFO, "[SkillRange] rangeFix64=0x%llX (%lld)", (unsigned long long)rangeFix64, (long long)rangeFix64);
     if (rangeFix64 <= 0) return -1.0f;
 
-    float result = DecoderFix64((uint64_t)rangeFix64);
-    LOG(LOG_LEVEL_INFO, "[SkillRange] ✓ range=%.4f", result);
-    return result;
+    float NormalAttackSkillRange = DecoderFix64((uint64_t)rangeFix64);
+    LOG(LOG_LEVEL_INFO, "[SkillRange] ✓ range=%.4f", NormalAttackSkillRange);
+
+    // 5. ActorComponentSkillMgr.get_currentActiveList()
+    typedef void* (*FnGetCurrentActiveList)(void*);
+    static FnGetCurrentActiveList s_getCurrentActiveList = nullptr;
+    if (!s_getCurrentActiveList) {
+        s_getCurrentActiveList = (FnGetCurrentActiveList)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
+                "get_currentActiveList");
+        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved get_currentActiveList=%p", (void*)s_getCurrentActiveList);
+    }
+
+    void* pCurrentActiveList = nullptr;
+    if (s_getCurrentActiveList) {
+        pCurrentActiveList = s_getCurrentActiveList(pSkillMgr);
+        LOG(LOG_LEVEL_INFO, "[SkillRange] currentActiveList=%p", pCurrentActiveList);
+        if (pCurrentActiveList && !isReadableManagedObject(pCurrentActiveList)) {
+            LOG(LOG_LEVEL_WARN, "[SkillRange] currentActiveList 不可读: %p", pCurrentActiveList);
+        }
+    }
+
+
+    uint8_t* pNativeAddr = (uint8_t*)pCurrentActiveList+0x10;
+    if(pNativeAddr){
+        uint64_t typeSize = *(uint64_t*)(pNativeAddr+0x18);
+        uint64_t Pram0Size = *(uint64_t*)(pNativeAddr+0x8);
+        uint64_t Pram1Size = *(uint64_t*)(pNativeAddr);
+
+        LOG(LOG_LEVEL_INFO, "[listSize] currentActiveList native addr=%p typeSize=%llu Pram0Size=%llu Pram1Size=%llu count=%llu",
+            pNativeAddr, typeSize, Pram0Size, Pram1Size,(Pram0Size-Pram1Size)/typeSize);
+    }
+    
+
+
+
+
+
+    return NormalAttackSkillRange;
 }
+
+

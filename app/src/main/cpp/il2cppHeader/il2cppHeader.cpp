@@ -505,7 +505,7 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
 
     fout << "struct VirtualInvokeData\n{\n";
     fout << "    Il2CppMethodPointer methodPtr;\n";
-    fout << "    const MethodInfo* method;\n";
+    fout << "    const struct MethodInfo* method;\n";
     fout << "};\n\n";
 
     fout << "struct Il2CppType\n{\n";
@@ -522,7 +522,7 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
 
     fout << "union Il2CppRGCTXData\n{\n";
     fout << "    void* rgctxDataDummy;\n";
-    fout << "    const MethodInfo* method;\n";
+    fout << "    const struct MethodInfo* method;\n";
     fout << "    const Il2CppType* type;\n";
     fout << "    Il2CppClass* klass;\n";
     fout << "};\n\n";
@@ -832,7 +832,7 @@ void li2cppHeader::li2cppHeader::DumpMethods(Il2CppClass* klass, std::shared_ptr
         std::string sig = retTypeName + " " + classSafeName + "_" + CleanIdentifier(mName) + " (";
 
         // 注入 __this 指针 (实例方法)
-        sig += classSafeName + "_o* __this";
+        sig += "struct " + classSafeName + "_o* __this";
         uMethod.typeSignature += "i"; // __this 也是一个指针
 
         uint32_t pCount = il2cpp_method_get_param_count(method);
@@ -843,7 +843,7 @@ void li2cppHeader::li2cppHeader::DumpMethods(Il2CppClass* klass, std::shared_ptr
             sig += ", " + pTypeName + " p" + std::to_string(i);
             uMethod.typeSignature += GetTypeAbbreviation(pTypeName);
         }
-        sig += ", const MethodInfo* method);";
+        sig += ", const struct MethodInfo* method);";
         uMethod.typeSignature += "i"; // 结尾的 MethodInfo*
 
         uMethod.signature = sig;
