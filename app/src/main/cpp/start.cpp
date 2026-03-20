@@ -830,37 +830,6 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
         std::thread([=]() {
             std::this_thread::sleep_for(std::chrono::seconds(2));
-
-            /*
-            {
-            // 生成 IDA 头文件和 script.json
-            try {
-                li2cppHeader::li2cppHeader header(pli2cppModeBase, pCodeRegistration,
-                                                   pMetadataRegistration, pGlobalMetadataHeader,
-                                                   pMetadataImagesTable);
-                header.start();
-                LOG(LOG_LEVEL_INFO, "[MyStartPoint] li2cppHeader 生成完成");
-            } catch (const std::exception& ex) {
-                LOG(LOG_LEVEL_ERROR, "[MyStartPoint] li2cppHeader 异常: %s", ex.what());
-            } catch (...) {
-                LOG(LOG_LEVEL_ERROR, "[MyStartPoint] li2cppHeader 未知异常");
-            }
-
-            // 生成 dumpcs.cs / dumpstr.cs
-            try {
-                li2cpp::li2cppDumper dumper(pli2cppModeBase, pCodeRegistration,
-                                            pMetadataRegistration, pGlobalMetadataHeader,
-                                            pMetadataImagesTable);
-                dumper.initInfo();
-                LOG(LOG_LEVEL_INFO, "[MyStartPoint] li2cppDumper 生成完成");
-            } catch (const std::exception& ex) {
-                LOG(LOG_LEVEL_ERROR, "[MyStartPoint] li2cppDumper 异常: %s", ex.what());
-            } catch (...) {
-                LOG(LOG_LEVEL_ERROR, "[MyStartPoint] li2cppDumper 未知异常");
-            }
-        }
-        */
-            
             TestFunction(pli2cppModeBase, pCodeRegistration,
                          pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
         }).detach();

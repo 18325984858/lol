@@ -238,7 +238,8 @@ bool fun::function::GetMember(std::string pMainModuleName,std::string pModuleNam
 uint64_t fun::function::GetMethodFun(std::string pMainModuleName, std::string pModuleName,
                                  std::string pClassName, std::string ptemplateName,
                                  std::string pMethodName,std::string pMethodtemplateName){
-        LOG(LOG_LEVEL_INFO,"[Test Game] GetMethodFun call");
+        LOG(LOG_LEVEL_INFO,"[Test Game] GetMethodFun call pMainModuleName : %s pModuleName : %s pClassName : %s ptemplateName : %s pMethodName : %s pMethodtemplateName : %s",
+            pMainModuleName.c_str(), pModuleName.c_str(), pClassName.c_str(), ptemplateName.c_str(), pMethodName.c_str(), pMethodtemplateName.c_str());
         if(m_pClassInfo && !m_pClassInfo->empty()) {
             for(auto&ite:*m_pClassInfo) {
                 if (*ite->m_ModuleData->m_pName == pModuleName) {

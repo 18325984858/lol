@@ -4,7 +4,6 @@
 
 #include "il2cppHeader.h"
 #include "../Log/log.h"
-#include <regex>
 #include <sstream>
 #include <fstream>
 #include <set>
@@ -16,6 +15,43 @@ std::string IntToHex(uint32_t value) {
     // 使用 std::uppercase 可以输出 0x1A 而不是 0x1a
     ss << "0x" << std::uppercase << std::hex << value;
     return ss.str();
+}
+
+static std::string CollapseUnderscores(const std::string& input) {
+    std::string output;
+    output.reserve(input.size());
+
+    bool lastWasUnderscore = false;
+    for (char c : input) {
+        if (c == '_') {
+            if (!lastWasUnderscore) {
+                output += c;
+                lastWasUnderscore = true;
+            }
+            continue;
+        }
+
+        output += c;
+        lastWasUnderscore = false;
+    }
+
+    return output;
+}
+
+static bool IsCKeyword(const std::string& name) {
+    static const std::set<std::string> keywords = {
+        "auto", "break", "case", "char", "const", "continue", "default", "do",
+        "double", "else", "enum", "extern", "float", "for", "goto", "if",
+        "int", "long", "register", "return", "short", "signed", "sizeof", "static",
+        "struct", "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
+        "class", "namespace", "template", "this", "new", "delete", "operator",
+        "virtual", "public", "private", "protected", "friend", "inline", "explicit",
+        "bool", "true", "false", "try", "catch", "throw", "using", "typename",
+        "export", "mutable", "override", "final", "nullptr", "alignas", "alignof",
+        "asm", "dynamic_cast", "static_cast", "reinterpret_cast", "const_cast",
+        "typeid", "decltype", "noexcept", "thread_local", "constexpr"
+    };
+    return keywords.count(name) != 0;
 }
 
 li2cppHeader::li2cppHeader::li2cppHeader(void *dqil2cppBase, void *pCodeRegistration,
@@ -106,10 +142,14 @@ std::string li2cppHeader::li2cppHeader::GetClassUniqueName(
 
     // 3. 统一字符清洗 (点号转下划线，过滤非字母数字)
     std::replace(uniqueIdentifier.begin(), uniqueIdentifier.end(), '.', '_');
-    uniqueIdentifier = std::regex_replace(uniqueIdentifier, std::regex("[^a-zA-Z0-9]"), "_");
+    for (char &c : uniqueIdentifier) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
+            c = '_';
+        }
+    }
 
     // 4. 清理连续下划线并去除首尾多余部分
-    uniqueIdentifier = std::regex_replace(uniqueIdentifier, std::regex("_{2,}"), "_");
+    uniqueIdentifier = CollapseUnderscores(uniqueIdentifier);
     if (!uniqueIdentifier.empty() && uniqueIdentifier[0] == '_') uniqueIdentifier.erase(0, 1);
     if (!uniqueIdentifier.empty() && uniqueIdentifier.back() == '_') uniqueIdentifier.pop_back();
 
@@ -250,7 +290,19 @@ void li2cppHeader::li2cppHeader::DumpFields(Il2CppClass* klass, std::shared_ptr<
             safeFieldName += "[" + std::to_string(valSize) + "]";
         }
 
-        // 4. 存储到结构体
+        // 4. 同一结构体内字段名去重，避免清洗后重名导致 IDA 解析失败
+        {
+            int dupCount = 0;
+            const std::string baseName = safeFieldName;
+            for (const auto& existing : unityClass->fields) {
+                if (existing.isStatic == isStatic && existing.name == safeFieldName) {
+                    ++dupCount;
+                    safeFieldName = baseName + "_" + std::to_string(dupCount);
+                }
+            }
+        }
+
+        // 5. 存储到结构体
         unityClass->fields.emplace_back(
                 safeFieldName,
                 idaTypeName,
@@ -369,14 +421,14 @@ std::string li2cppHeader::li2cppHeader::GetSafeGenericName(const Il2CppType* typ
     for (char &c : fullName) {
         if (c == '<' || c == '>' || c == '[' || c == ']' ||
             c == ',' || c == '`' || c == '.' || c == '+' ||
-            c == '/' || c == ' ' || c == '*' || c == ':') {
+            c == '/' || c == ' ' || c == '*' || c == ':' ||
+            c == '-' || c == '=') {
             c = '_';
         }
     }
 
     // 3. 规范化处理：去除连续下划线，使名字更美观
-    // 正则替换： "___" -> "_"
-    fullName = std::regex_replace(fullName, std::regex("_{2,}"), "_");
+    fullName = CollapseUnderscores(fullName);
 
     // 4. 去除首尾可能多余的下划线
     if (!fullName.empty() && fullName[0] == '_') fullName.erase(0, 1);
@@ -417,16 +469,28 @@ std::string li2cppHeader::li2cppHeader::CleanIdentifier(std::string name) {
         // 替换点号、尖括号、方括号、逗号、空格等所有 C 语法不支持的符号
         if (c == '.' || c == '<' || c == '>' || c == '`' ||
             c == ',' || c == '[' || c == ']' || c == '+' ||
-            c == '/' || c == ' ' || c == '*' || c == ':' || c == '-') {
+            c == '/' || c == ' ' || c == '*' || c == ':' ||
+            c == '-' || c == '=') {
             c = '_';
         }
     }
-    // 使用正则压缩连续的下划线，防止出现 ____
-    name = std::regex_replace(name, std::regex("_{2,}"), "_");
+    name = CollapseUnderscores(name);
 
     // 移除首尾多余的下划线
     if (!name.empty() && name[0] == '_') name.erase(0, 1);
     if (!name.empty() && name.back() == '_') name.pop_back();
+
+    // C 标识符不能以数字开头，加前缀 _
+    if (!name.empty() && name[0] >= '0' && name[0] <= '9') {
+        name = "_" + name;
+    }
+
+    if (name.empty()) name = "_unnamed";
+
+    // C/C++ 保留关键字加前缀，避免导入 IDA 时语法错误
+    if (IsCKeyword(name)) {
+        name = "_" + name;
+    }
 
     return name;
 }
@@ -593,7 +657,6 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
             }
             // 2. 值类型字段依赖 (内联嵌入的 struct XXX_Fields)
             for (const auto& field : cls->fields) {
-                if (field.isStatic) continue;
                 const std::string& t = field.typeName;
                 // 匹配 "struct XXX_Fields" 模式
                 if (t.size() > 14 && t.compare(0, 7, "struct ") == 0
@@ -611,6 +674,16 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
         for (auto const& [key, _] : m_classMap) {
             topoVisit(key);
         }
+
+        // 值类型按值内联使用最频繁，统一提前输出，降低 IDA 对后置定义的报错概率。
+        std::stable_sort(sortedKeys.begin(), sortedKeys.end(), [&](const std::string& lhs, const std::string& rhs) {
+            auto lit = m_classMap.find(lhs);
+            auto rit = m_classMap.find(rhs);
+            const bool lValueType = (lit != m_classMap.end()) && lit->second->typeAttr.bits.isValueType;
+            const bool rValueType = (rit != m_classMap.end()) && rit->second->typeAttr.bits.isValueType;
+            if (lValueType != rValueType) return lValueType > rValueType;
+            return false;
+        });
     }
 
     // ====== 收集所有被引用但不在 classMap 中的值类型，生成前向声明 ======
@@ -618,7 +691,6 @@ void li2cppHeader::li2cppHeader::SaveToIdaHeader(const std::string& path) {
     for (const auto& uniqueKey : sortedKeys) {
         auto& cls = m_classMap[uniqueKey];
         for (const auto& field : cls->fields) {
-            if (field.isStatic) continue;
             const std::string& t = field.typeName;
             if (t.size() > 14 && t.compare(0, 7, "struct ") == 0
                 && t.compare(t.size() - 7, 7, "_Fields") == 0) {
@@ -953,18 +1025,19 @@ void li2cppHeader::li2cppHeader::HandleStringLiteral(
         const MetadataLimits& limits,
         std::vector<ScriptStringEntry>& out)
 {
-
-    /////////////////////////////////////
     if (decodedIndex >= limits.maxStringLiteralIndex) return;
-    const auto* stringLiteral = reinterpret_cast<const Il2CppStringLiteral*>(
-            (uint64_t)m_pGlobalMetadata + m_pGlobalMetadataHeader->stringLiteralOffset) + decodedIndex;
-    if (stringLiteral && stringLiteral->length > 0) {
-        const char* rawData = (const char*)((uint64_t)m_pGlobalMetadata
-                + m_pGlobalMetadataHeader->stringLiteralDataOffset) + stringLiteral->dataIndex;
-        out.push_back({usageAddr, std::string(rawData, stringLiteral->length)});
-    } else {
-        out.push_back({usageAddr, ""});
+
+    // 字符串字面量已加密时，必须走运行时 API 解密，不能直接读 metadata 原始字节。
+    Il2CppString* il2cppStr = GetStringLiteralFromIndex(decodedIndex);
+    ScriptStringEntry entry{};
+    entry.address = usageAddr;
+    if (!il2cppStr) {
+        entry.value = "";
+        out.push_back(entry);
+        return;
     }
+    entry.value = il2cpp_Il2CppString_toCString(il2cppStr);
+    out.push_back(entry);
 }
 
 // =====================================================================
@@ -1184,7 +1257,7 @@ void li2cppHeader::li2cppHeader::CollectMetadataUsages(
             try {
                 switch (usage) {
                     case kIl2CppMetadataUsageStringLiteral:
-                        //HandleStringLiteral(decodedIndex, usageAddr, limits, scriptStrings);
+                        HandleStringLiteral(decodedIndex, usageAddr, limits, scriptStrings);
                         break;
                     case kIl2CppMetadataUsageTypeInfo:
                         HandleTypeMetadata(decodedIndex, usageAddr, limits, "_TypeInfo", "Il2CppClass*", scriptMetadata);
