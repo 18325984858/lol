@@ -1150,3 +1150,39 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
 
     return NormalAttackSkillRange;
 }
+
+
+
+
+/*
+
+    void* pCurrentSkill = nullptr;
+    if (s_getCurrentActiveList) {
+        void* pCurrentActiveList = s_getCurrentActiveList(pSkillMgr);
+        LOG(LOG_LEVEL_INFO, "[SkillRange] currentActiveList=%p", pCurrentActiveList);
+
+        if (pCurrentActiveList && IsReadableMemory((uint8_t*)pCurrentActiveList + 0x18, sizeof(void*))) {
+            void* pVectorObject = *(void**)((uint8_t*)pCurrentActiveList + 0x18);
+            if (pVectorObject && IsReadableMemory((uint8_t*)pVectorObject + 0x10, sizeof(uintptr_t))) {
+                uintptr_t pNativeVector = *(uintptr_t*)((uint8_t*)pVectorObject + 0x10);
+                if (pNativeVector && IsReadableMemory((void*)pNativeVector, 0x20)) {
+                    uintptr_t beginPtr = *(uintptr_t*)(pNativeVector + 0x0);
+                    uintptr_t endPtr = *(uintptr_t*)(pNativeVector + 0x8);
+                    uint64_t typeSize = *(uint64_t*)(pNativeVector + 0x18);
+
+                    if (beginPtr && endPtr >= beginPtr && typeSize >= sizeof(void*) &&
+                        IsReadableMemory((void*)beginPtr, sizeof(void*))) {
+                        pCurrentSkill = *(void**)beginPtr;
+                        LOG(LOG_LEVEL_INFO,
+                            "[SkillRange] active skill vector=%p begin=%p end=%p typeSize=%llu firstSkill=%p",
+                            (void*)pNativeVector,
+                            (void*)beginPtr,
+                            (void*)endPtr,
+                            (unsigned long long)typeSize,
+                            pCurrentSkill);
+                    }
+                }
+            }
+        }
+
+*/

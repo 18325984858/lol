@@ -4,6 +4,7 @@
 
 #include "Log/log.h"
 #include "start.h"
+#include "Injector/Injector.h"
 
 struct CommandResult {
     int exitCode;
@@ -51,4 +52,20 @@ Java_com_example_dobbyproject_MainActivity_stringFromJNI(
 
 
     return env->NewStringUTF(hello.c_str());
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_example_dobbyproject_MainActivity_injectSoToTarget(
+        JNIEnv* env,
+        jobject /* this */,
+        jstring packageName,
+        jstring soPath) {
+    const char* pkg = env->GetStringUTFChars(packageName, nullptr);
+    const char* so  = env->GetStringUTFChars(soPath, nullptr);
+
+    int ret = Injector::injectByPackageName(pkg, so);
+
+    env->ReleaseStringUTFChars(packageName, pkg);
+    env->ReleaseStringUTFChars(soPath, so);
+    return ret;
 }

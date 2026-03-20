@@ -9,8 +9,8 @@ setlocal EnableDelayedExpansion
 :: --- 配置区 ---
 set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
 set "PATH=%JAVA_HOME%\bin;%PATH%"
-set "ADB=C:\Users\user\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-set "ADB_DEVICE=-s 37171FDJH001TH"
+set "ADB=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
+set "ADB_DEVICE="
 set "PACKAGE=com.example.dobbyproject"
 set "ACTIVITY=%PACKAGE%/.MainActivity"
 set "APK_PATH=app\build\outputs\apk\debug\app-debug.apk"

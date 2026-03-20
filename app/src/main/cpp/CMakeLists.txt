@@ -99,6 +99,7 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         "lol/lolm.cpp"
         "interface/interface.cpp"
         "il2cppHeader/il2cppHeader.cpp"
+        "Injector/Injector.cpp"
 )
 
 # Specifies libraries CMake should link to your target library. You
@@ -121,5 +122,28 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         AndroidSurfaceImgui/modules
         AndroidSurfaceImgui/third_party
         AndroidSurfaceImgui/third_party/imgui
+)
+
+######################################################################################################
+# 独立注入器可执行文件 (需要通过 su 以 root 运行)
+# 伪装为 .so 文件, 让 Gradle 自动打包进 APK
+######################################################################################################
+add_executable(injector
+        "Injector/injector_main.cpp"
+        "Injector/Injector.cpp"
+        "Log/log.cpp"
+)
+
+target_link_libraries(injector
+        log
+        ${dl-lib}
+)
+
+# 重命名为 libinjector.so, Gradle 只打包 lib*.so 到 APK
+set_target_properties(injector PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+        OUTPUT_NAME "injector"
+        SUFFIX ".so"
+        PREFIX "lib"
 )
 
