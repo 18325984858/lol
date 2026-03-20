@@ -830,8 +830,10 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
         std::thread([=]() {
             std::this_thread::sleep_for(std::chrono::seconds(2));
-            TestFunction(pli2cppModeBase, pCodeRegistration,
-                         pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
+
+           TestFunction(pli2cppModeBase, pCodeRegistration,
+                    pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
+
         }).detach();
 
         return true;
@@ -846,3 +848,17 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
     }
 }
 
+
+
+/*
+
+  li2cppHeader::li2cppHeader il2cpp1(pli2cppModeBase, pCodeRegistration,
+                                     pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
+            il2cpp1.start();
+
+           li2cpp::li2cppDumper il2cpp2(pli2cppModeBase, pCodeRegistration,
+                                     pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
+            il2cpp2.initInfo();
+
+*/
+           

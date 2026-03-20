@@ -1011,20 +1011,6 @@ std::string lol::FEVisi::readIl2CppString(void* pIl2CppString) {
 float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     if (!actorVisi) return -1.0f;
 
-    auto isReadableManagedObject = [&](void* object) -> bool {
-        if (!object || !IsReadableMemory(object, sizeof(void*))) return false;
-
-        auto* klass = GetObjectKlass(object);
-        if (!klass) return false;
-
-        int32_t instanceSize = m_pfunctionInfo->il2cpp_class_instance_size(klass);
-        if (instanceSize <= 0) {
-            return IsReadableMemory(object, sizeof(void*) * 2);
-        }
-
-        return IsReadableMemory(object, static_cast<size_t>(instanceSize));
-    };
-
     // 1. BattleActorVisi → get_actor() → BattleActor
     typedef void* (*FnGetActor)(void*);
     static FnGetActor s_getActor = nullptr;
@@ -1036,7 +1022,7 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     }
     if (!s_getActor) return -1.0f;
     void* pBattleActor = s_getActor(actorVisi);
-    if (!isReadableManagedObject(pBattleActor)) return -1.0f;
+    if (!pBattleActor || !IsReadableMemory(pBattleActor, 0x20)) return -1.0f;
 
     // 2. BattleActor → get_skillMgr()
     typedef void* (*FnGetSkillMgr)(void*);
@@ -1049,7 +1035,7 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     }
     if (!s_getSkillMgr) return -1.0f;
     void* pSkillMgr = s_getSkillMgr(pBattleActor);
-    if (!isReadableManagedObject(pSkillMgr)) return -1.0f;
+    if (!pSkillMgr || !IsReadableMemory(pSkillMgr, 0x60)) return -1.0f;
 
     // 3. GetNormalAttackSkill()
     typedef void* (*FnGetSkill)(void*);
@@ -1062,7 +1048,84 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     }
     if (!s_getNormalAttackSkill) return -1.0f;
     void* pSkill = s_getNormalAttackSkill(pSkillMgr);
-    if (!isReadableManagedObject(pSkill)) return -1.0f;
+
+    // 3.1 从 currentActiveList 取当前激活技能，避免调用需要 skillID 的 GetCurrentSkill(int)
+    typedef void* (*FnGetCurrentActiveList)(void*);
+    static FnGetCurrentActiveList s_getCurrentActiveList = nullptr;
+    if (!s_getCurrentActiveList) {
+        s_getCurrentActiveList = (FnGetCurrentActiveList)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
+                "get_currentActiveList");
+        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved get_currentActiveList=%p", (void*)s_getCurrentActiveList);
+    }
+
+    void* pCurrentSkill = nullptr;
+    if (s_getCurrentActiveList) {
+        void* pCurrentActiveList = s_getCurrentActiveList(pSkillMgr);
+        LOG(LOG_LEVEL_INFO, "[SkillRange] currentActiveList=%p", pCurrentActiveList);
+
+        if (pCurrentActiveList && IsReadableMemory((uint8_t*)pCurrentActiveList + 0x18, sizeof(void*))) {
+            void* pVectorObject = *(void**)((uint8_t*)pCurrentActiveList + 0x18);
+            if (pVectorObject && IsReadableMemory((uint8_t*)pVectorObject + 0x10, sizeof(uintptr_t))) {
+                uintptr_t pNativeVector = *(uintptr_t*)((uint8_t*)pVectorObject + 0x10);
+                if (pNativeVector && IsReadableMemory((void*)pNativeVector, 0x20)) {
+                    uintptr_t beginPtr = *(uintptr_t*)(pNativeVector + 0x0);
+                    uintptr_t endPtr = *(uintptr_t*)(pNativeVector + 0x8);
+                    uint64_t typeSize = *(uint64_t*)(pNativeVector + 0x18);
+
+                    if (beginPtr && endPtr >= beginPtr && typeSize >= sizeof(void*) &&
+                        IsReadableMemory((void*)beginPtr, sizeof(void*))) {
+                        pCurrentSkill = *(void**)beginPtr;
+                        LOG(LOG_LEVEL_INFO,
+                            "[SkillRange] active skill vector=%p begin=%p end=%p typeSize=%llu firstSkill=%p",
+                            (void*)pNativeVector,
+                            (void*)beginPtr,
+                            (void*)endPtr,
+                            (unsigned long long)typeSize,
+                            pCurrentSkill);
+                    }
+                }
+            }
+        }
+    }
+
+    typedef bool (*FnActorSkillState)(void*, void*);
+    static FnActorSkillState s_isCasting = nullptr;
+    static FnActorSkillState s_isCast = nullptr;
+    if (!s_isCasting) {
+        s_isCasting = (FnActorSkillState)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorSkill", "FrameEngine.Logic.ActorSkill",
+                "IsCasting");
+        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved ActorSkill.IsCasting=%p", (void*)s_isCasting);
+    }
+    if (!s_isCast) {
+        s_isCast = (FnActorSkillState)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorSkill", "FrameEngine.Logic.ActorSkill",
+                "IsCast");
+        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved ActorSkill.IsCast=%p", (void*)s_isCast);
+    }
+
+    bool heroIsCasting = false;
+    if (pCurrentSkill ) {
+        const bool isCasting = s_isCasting ? s_isCasting(pCurrentSkill, nullptr) : false;
+        const bool isCast = s_isCast ? s_isCast(pCurrentSkill, nullptr) : false;
+        heroIsCasting = isCasting || isCast;
+        LOG(LOG_LEVEL_INFO,
+            "[SkillRange] currentSkill=%p isCasting=%d isCast=%d heroIsCasting=%d",
+            pCurrentSkill,
+            isCasting ? 1 : 0,
+            isCast ? 1 : 0,
+            heroIsCasting ? 1 : 0);
+    }
+
+    if (heroIsCasting) {
+        pSkill = pCurrentSkill;
+    }
+
+    if (!pSkill || !IsReadableMemory(pSkill, 0xC0)) return -1.0f;
 
     // 4. ActorSkill.get_curRange() → Fix64
     typedef int64_t (*FnGetCurRange)(void*, void*);
@@ -1084,43 +1147,6 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     float NormalAttackSkillRange = DecoderFix64((uint64_t)rangeFix64);
     LOG(LOG_LEVEL_INFO, "[SkillRange] ✓ range=%.4f", NormalAttackSkillRange);
 
-    // 5. ActorComponentSkillMgr.get_currentActiveList()
-    typedef void* (*FnGetCurrentActiveList)(void*);
-    static FnGetCurrentActiveList s_getCurrentActiveList = nullptr;
-    if (!s_getCurrentActiveList) {
-        s_getCurrentActiveList = (FnGetCurrentActiveList)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
-                "get_currentActiveList");
-        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved get_currentActiveList=%p", (void*)s_getCurrentActiveList);
-    }
-
-    void* pCurrentActiveList = nullptr;
-    if (s_getCurrentActiveList) {
-        pCurrentActiveList = s_getCurrentActiveList(pSkillMgr);
-        LOG(LOG_LEVEL_INFO, "[SkillRange] currentActiveList=%p", pCurrentActiveList);
-        if (pCurrentActiveList && !isReadableManagedObject(pCurrentActiveList)) {
-            LOG(LOG_LEVEL_WARN, "[SkillRange] currentActiveList 不可读: %p", pCurrentActiveList);
-        }
-    }
-
-
-    uint8_t* pNativeAddr = (uint8_t*)pCurrentActiveList+0x10;
-    if(pNativeAddr){
-        uint64_t typeSize = *(uint64_t*)(pNativeAddr+0x18);
-        uint64_t Pram0Size = *(uint64_t*)(pNativeAddr+0x8);
-        uint64_t Pram1Size = *(uint64_t*)(pNativeAddr);
-
-        LOG(LOG_LEVEL_INFO, "[listSize] currentActiveList native addr=%p typeSize=%llu Pram0Size=%llu Pram1Size=%llu count=%llu",
-            pNativeAddr, typeSize, Pram0Size, Pram1Size,(Pram0Size-Pram1Size)/typeSize);
-    }
-    
-
-
-
-
 
     return NormalAttackSkillRange;
 }
-
-

@@ -30,7 +30,7 @@ fun::function::function(void* dqil2cppBase,
     };
     initFile(m_outlog, m_pathlog);
 
-    if(m_pClassInfo){
+    if(!m_pClassInfo){
         m_pClassInfo = std::make_shared<std::list<std::shared_ptr<CClassInfo>>>();
     }
 }
@@ -38,17 +38,12 @@ fun::function::function(void* dqil2cppBase,
 
 /**
  * 日志记录函数
- * 负责将调试信息写入到 /data/data/com.DefaultCompany.Demo1/cache/log.cs
+ * 负责将调试信息写入到 /data/data/com.DefaultCompany.Demo1/files/log.cs
  */
 bool fun::function::writeLog(std::string str) {
     if (m_outlog == nullptr) {
         return false;
     }
-
-    // 格式化输出，增加标识前缀
-    //std::string out = "[SFK] : " + str;
-
-
     //LOG(LOG_LEVEL_INFO,"%s",str.c_str());
     // 调用你文件类 cMyfile 的接口写入一行
     //m_outlog->writeLine(str.c_str());
