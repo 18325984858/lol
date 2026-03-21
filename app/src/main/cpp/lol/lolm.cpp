@@ -414,12 +414,18 @@ void* lol::FEVisi::getActorAttribute(void* actorVisi) {
 uint32_t lol::FEVisi::readEnemyHeroLeve(void* pAttribute) {
     if (!pAttribute) return 0;
 
-    // nativeData = *(pAttribute + 0x18)
-    int64_t nativeData = *(int64_t*)((uint8_t*)pAttribute + 0x18);
-    if (!nativeData) return 0;
-
-    // heroLevel = *(nativeData + 0x78)  — RVA 0x8495058
-    return *(uint32_t*)(nativeData + 0x78);
+    typedef int32_t (*pGetLevel)(void*, void*);
+    static pGetLevel s_getLevel = nullptr;
+    if (!s_getLevel) {
+        s_getLevel = (pGetLevel)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorComponentAttribute",
+                "FrameEngine.Logic.ActorComponentAttribute",
+                "get_level");
+        LOG(LOG_LEVEL_INFO, "[MiniMap] resolve get_level=%p", (void*)s_getLevel);
+    }
+    if (!s_getLevel) return 0;
+    return (uint32_t)s_getLevel(pAttribute, nullptr);
 }
 
 void lol::FEVisi::readEnemyHeroHP(void* pAttribute,float* curHp, float* maxHp) {
@@ -435,32 +441,33 @@ void lol::FEVisi::readEnemyHeroHP(void* pAttribute,float* curHp, float* maxHp) {
     //   shield       = *(nativeData + 0F0)   — RVA 0x849510C
     // ═══════════════════════════════════════════════════════════════
 
-    int64_t nativeData = *(int64_t*)((uint8_t*)pAttribute + 0x18);
-    if (!nativeData) {
-        LOG(LOG_LEVEL_ERROR, "[MiniMap][HP] nativeData(this+0x18) 为空!");
-        return;
+    // curHP: get_curHP()
+    typedef int64_t (*pGetCurHP)(void*, void*);
+    static pGetCurHP s_getCurHP = nullptr;
+    if (!s_getCurHP) {
+        s_getCurHP = (pGetCurHP)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorComponentAttribute",
+                "FrameEngine.Logic.ActorComponentAttribute",
+                "get_curHP");
+        LOG(LOG_LEVEL_INFO, "[MiniMap][HP] resolve get_curHP=%p", (void*)s_getCurHP);
     }
 
-    //当前生命值的偏移位置
-    int64_t curHP_raw  = *(int64_t*)(nativeData + 0x138);
+    int64_t curHP_raw = s_getCurHP ? s_getCurHP(pAttribute, nullptr) : 0;
 
-    // maxHP: GetFixAttrValue(attr, 2)
-    typedef int64_t (*pGetMaxHP)(void*);
-    static pGetMaxHP s_getMaxHP = nullptr;
-    if (!s_getMaxHP)
-        s_getMaxHP = (pGetMaxHP)((uint64_t)m_il2cppBase + 0x84959E0);
-
-    int64_t maxHP_raw = s_getMaxHP ? s_getMaxHP(pAttribute) : 0;
-
-    // 备用: sub_8495BC8 (nativeData+0xB8 缓存 → GetFixAttrValue(0x17)*GetFixAttrValue(0x18))
-    if (maxHP_raw == 0) {
-        typedef int64_t (*pGetMaxHP_Fallback)(void*);
-        static pGetMaxHP_Fallback s_getMaxHP_Fallback = nullptr;
-        if (!s_getMaxHP_Fallback)
-            s_getMaxHP_Fallback = (pGetMaxHP_Fallback)((uint64_t)m_il2cppBase + 0x8495BC8);
-        if (s_getMaxHP_Fallback)
-            maxHP_raw = s_getMaxHP_Fallback(pAttribute);
+    // maxHP: get_maxHPVisi()
+    typedef int64_t (*pGetMaxHPVisi)(void*, void*);
+    static pGetMaxHPVisi s_getMaxHPVisi = nullptr;
+    if (!s_getMaxHPVisi) {
+        s_getMaxHPVisi = (pGetMaxHPVisi)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorComponentAttribute",
+                "FrameEngine.Logic.ActorComponentAttribute",
+                "get_maxHPVisi");
+        LOG(LOG_LEVEL_INFO, "[MiniMap][HP] resolve get_maxHPVisi=%p", (void*)s_getMaxHPVisi);
     }
+
+    int64_t maxHP_raw = s_getMaxHPVisi ? s_getMaxHPVisi(pAttribute, nullptr) : 0;
 
     if(curHp){
         *curHp = DecoderFix64(curHP_raw); // Fix64 转 float
@@ -997,15 +1004,18 @@ std::string lol::FEVisi::readIl2CppString(void* pIl2CppString) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // getMySkillValidTargetRange — 获取己方英雄当前技能的有效目标范围
 //
-// 调用链: BattleActorVisi → get_actor() → BattleActor
-//         → get_auxComponent() → ActorComponentAuxiliary
-//         → get_targetSystem() → TargetSystem
-//         → GetSkillValidTargetRange(currentActiveSkill) → Fix64
+// 施法技能检测优先级（按顺序尝试，找到即停止）:
 //
-// IDA RVA: GetSkillValidTargetRange = 0x46133a4
-//          get_targetSystem         = 0x84972fc
-//          get_auxComponent         = 0x86024ec / 0x4f6d73c
-//          get_currentActiveList    = 0x84a6f40
+//   ┌─ UI 层 (SkillUILogic 静态字段) ───────────────────────────────────────────┐
+//   │  方式⑧  SkillUILogic.curPressedSkill — 技能按钮被按下时立即生效         │
+//   │         （按下技能图标、出现蓝色瞄准圈时 curPressedSkill != null）       │
+//   └──────────────────────────────────────────────────────────────────────────┘
+//   ┌─ 逻辑层 (ActorComponentSkillMgr) ────────────────────────────────────────┐
+//   │  方式⑤  SkillSlot[0-4].currentSkill — 遍历技能槽位（已验证生效）        │
+//   └──────────────────────────────────────────────────────────────────────────┘
+//
+// 命中后日志打印 "✓ 方式⑤"。
+// 若失败，使用普攻技能 (GetNormalAttackSkill) 的 get_curRange。
 // ═══════════════════════════════════════════════════════════════════════════════
 
 float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
@@ -1049,80 +1059,233 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     if (!s_getNormalAttackSkill) return -1.0f;
     void* pSkill = s_getNormalAttackSkill(pSkillMgr);
 
-    // 3.1 从 currentActiveList 取当前激活技能，避免调用需要 skillID 的 GetCurrentSkill(int)
-    typedef void* (*FnGetCurrentActiveList)(void*);
-    static FnGetCurrentActiveList s_getCurrentActiveList = nullptr;
-    if (!s_getCurrentActiveList) {
-        s_getCurrentActiveList = (FnGetCurrentActiveList)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
-                "get_currentActiveList");
-        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved get_currentActiveList=%p", (void*)s_getCurrentActiveList);
+    // 3.1 通过 SkillUILogic 获取当前正在释放的技能（C# ActorSkill 对象）
+    //
+    // 关键: currentActiveList 中存的是 native 数据指针，不是 C# 对象，
+    //       不能直接传给 IsCasting/IsCast 等 il2cpp 方法。
+    //       正确做法: 从 SkillUILogic._curSkill (偏移 0xB8) 获取 C# 对象，
+    //       然后调用 IsCasting/IsCast 判断状态。
+
+    typedef bool (*FnActorSkillState)(void*, void*);
+    static FnActorSkillState s_isCasting     = nullptr;
+    static FnActorSkillState s_isCast        = nullptr;
+    static FnActorSkillState s_isUsed        = nullptr;
+    static FnActorSkillState s_isCastSuccess = nullptr;
+    static FnActorSkillState s_isFinished    = nullptr;
+    static FnActorSkillState s_isManualFinish= nullptr;
+    static FnActorSkillState s_isReady       = nullptr;
+    static FnActorSkillState s_isLearn       = nullptr;
+    static FnActorSkillState s_canBeCast     = nullptr;
+    static FnActorSkillState s_isCastBackswing = nullptr;
+    static bool s_skillStatesResolved = false;
+
+    if (!s_skillStatesResolved) {
+        s_skillStatesResolved = true;
+
+        // 辅助 lambda: 按多个候选名称解析方法
+        auto resolveMethod = [&](const char* methodNames[], int count, const char* label) -> FnActorSkillState {
+            for (int i = 0; i < count; i++) {
+                auto fn = (FnActorSkillState)m_pfunctionInfo->GetMethodFun(
+                        "ilbil2cpp.so", "Assembly-CSharp.dll",
+                        "ActorSkill", "FrameEngine.Logic.ActorSkill", methodNames[i]);
+                if (fn) {
+                    LOG(LOG_LEVEL_INFO, "[SkillState] resolve %s → %s=%p", label, methodNames[i], (void*)fn);
+                    return fn;
+                }
+            }
+            LOG(LOG_LEVEL_WARN, "[SkillState] %s 所有变体均未找到", label);
+            return nullptr;
+        };
+
+        const char* castingNames[]      = {"IsCasting", "get_IsCasting", "get_isCasting", "isCasting"};
+        const char* castNames[]         = {"IsCast", "get_IsCast", "get_isCast", "isCast"};
+        const char* usedNames[]         = {"IsUsed", "get_IsUsed", "get_isUsed", "isUsed"};
+        const char* castSuccessNames[]  = {"IsCastSuccess", "get_IsCastSuccess"};
+        const char* finishedNames[]     = {"IsFinished", "get_IsFinished"};
+        const char* manualFinishNames[] = {"IsManualFinish", "get_IsManualFinish"};
+        const char* readyNames[]        = {"IsReady", "get_IsReady"};
+        const char* learnNames[]        = {"get_isLearn", "isLearn"};
+        const char* canBeCastNames[]    = {"get_canBeCast", "canBeCast"};
+        const char* backswingNames[]    = {"get_isCastBackswing", "isCastBackswing"};
+
+        s_isCasting      = resolveMethod(castingNames,      4, "IsCasting");
+        s_isCast         = resolveMethod(castNames,         4, "IsCast");
+        s_isUsed         = resolveMethod(usedNames,         4, "IsUsed");
+        s_isCastSuccess  = resolveMethod(castSuccessNames,  2, "IsCastSuccess");
+        s_isFinished     = resolveMethod(finishedNames,     2, "IsFinished");
+        s_isManualFinish = resolveMethod(manualFinishNames, 2, "IsManualFinish");
+        s_isReady        = resolveMethod(readyNames,        2, "IsReady");
+        s_isLearn        = resolveMethod(learnNames,        2, "isLearn");
+        s_canBeCast      = resolveMethod(canBeCastNames,    2, "canBeCast");
+        s_isCastBackswing= resolveMethod(backswingNames,    2, "isCastBackswing");
     }
 
-    void* pCurrentSkill = nullptr;
-    if (s_getCurrentActiveList) {
-        void* pCurrentActiveList = s_getCurrentActiveList(pSkillMgr);
-        LOG(LOG_LEVEL_INFO, "[SkillRange] currentActiveList=%p", pCurrentActiveList);
+    // 辅助 lambda: 检查 ActorSkill 是否正在施法，并打印所有状态
+    auto checkCasting = [&](void* pActorSkill) -> bool {
+        if (!pActorSkill) return false;
 
-        if (pCurrentActiveList && IsReadableMemory((uint8_t*)pCurrentActiveList + 0x18, sizeof(void*))) {
-            void* pVectorObject = *(void**)((uint8_t*)pCurrentActiveList + 0x18);
-            if (pVectorObject && IsReadableMemory((uint8_t*)pVectorObject + 0x10, sizeof(uintptr_t))) {
-                uintptr_t pNativeVector = *(uintptr_t*)((uint8_t*)pVectorObject + 0x10);
-                if (pNativeVector && IsReadableMemory((void*)pNativeVector, 0x20)) {
-                    uintptr_t beginPtr = *(uintptr_t*)(pNativeVector + 0x0);
-                    uintptr_t endPtr = *(uintptr_t*)(pNativeVector + 0x8);
-                    uint64_t typeSize = *(uint64_t*)(pNativeVector + 0x18);
+        bool casting      = s_isCasting      ? s_isCasting(pActorSkill, nullptr)      : false;
+        bool cast         = s_isCast         ? s_isCast(pActorSkill, nullptr)         : false;
+        bool used         = s_isUsed         ? s_isUsed(pActorSkill, nullptr)         : false;
+        bool castSuccess  = s_isCastSuccess  ? s_isCastSuccess(pActorSkill, nullptr)  : false;
+        bool finished     = s_isFinished     ? s_isFinished(pActorSkill, nullptr)     : false;
+        bool manualFinish = s_isManualFinish ? s_isManualFinish(pActorSkill, nullptr) : false;
+        bool ready        = s_isReady        ? s_isReady(pActorSkill, nullptr)        : false;
+        bool learned      = s_isLearn        ? s_isLearn(pActorSkill, nullptr)        : false;
+        bool canCast      = s_canBeCast      ? s_canBeCast(pActorSkill, nullptr)      : false;
+        bool backswing    = s_isCastBackswing? s_isCastBackswing(pActorSkill, nullptr): false;
 
-                    if (beginPtr && endPtr >= beginPtr && typeSize >= sizeof(void*) &&
-                        IsReadableMemory((void*)beginPtr, sizeof(void*))) {
-                        pCurrentSkill = *(void**)beginPtr;
+        LOG(LOG_LEVEL_INFO,
+            "[SkillState] skill=%p | Learned=%d CanBeCast=%d Ready=%d "
+            "IsCasting=%d IsCast=%d IsCastSuccess=%d IsCastBackswing=%d "
+            "IsUsed=%d IsFinished=%d IsManualFinish=%d",
+            pActorSkill, learned, canCast, ready,
+            casting, cast, castSuccess, backswing,
+            used, finished, manualFinish);
+
+        return casting || cast || used;
+    };
+
+    // ─── 查找正在释放的技能 ───
+    void* pCastingSkill = nullptr;
+
+    // ─── 方式⑧: 通过 il2cpp 反射 API 读取 SkillUILogic.curPressedSkill 静态字段 ───
+    // 当玩家按下技能图标、出现蓝色瞄准圈时，curPressedSkill != null
+    {
+        static ::Il2CppClass* s_skillUILogicKlass = nullptr;
+        static uint32_t s_triggerDownOff = INVALID_OFFSET;
+        static uint32_t s_curSkillOff    = INVALID_OFFSET;
+        static uint32_t s_slotIndexOff   = INVALID_OFFSET;
+        static uint32_t s_oriSkillIDOff  = INVALID_OFFSET;
+        static bool s_fieldsResolved = false;
+
+        if (!s_skillUILogicKlass && m_pfunctionInfo) {
+            s_skillUILogicKlass = m_pfunctionInfo->FindClassByName(
+                        "ilbil2cpp.so", "Assembly-CSharp.dll",
+                        "SkillUILogic", "");
+            LOG(LOG_LEVEL_INFO, "[SkillRange][方式⑧] FindClass SkillUILogic=%p", s_skillUILogicKlass);
+        }
+
+        // 一次性解析实例字段偏移
+        if (s_skillUILogicKlass && !s_fieldsResolved) {
+            s_fieldsResolved = true;
+            s_triggerDownOff = GetFieldOffsetFromKlass(s_skillUILogicKlass, "isTriggerSkillDown");
+            s_curSkillOff    = GetFieldOffsetFromKlass(s_skillUILogicKlass, "_curSkill");
+            s_slotIndexOff   = GetFieldOffsetFromKlass(s_skillUILogicKlass, "_curSlotIndex");
+            s_oriSkillIDOff  = GetFieldOffsetFromKlass(s_skillUILogicKlass, "oriSkillID");
+            LOG(LOG_LEVEL_INFO,
+                "[SkillRange][方式⑧] offsets: triggerDown=0x%X curSkill=0x%X slotIndex=0x%X oriSkillID=0x%X",
+                s_triggerDownOff, s_curSkillOff, s_slotIndexOff, s_oriSkillIDOff);
+        }
+
+        // 通过 il2cpp_field_static_get_value 读取 curPressedSkill
+        if (s_skillUILogicKlass) {
+            void* pCurPressed = nullptr;
+            void* iter = nullptr;
+            ::Il2CppClass* pKlass = s_skillUILogicKlass;
+            while (pKlass) {
+                iter = nullptr;
+                while (auto* field = m_pfunctionInfo->il2cpp_class_get_fields(pKlass, &iter)) {
+                    const char* name = m_pfunctionInfo->il2cpp_field_get_name(field);
+                    if (name && strcmp(name, "curPressedSkill") == 0) {
+                        m_pfunctionInfo->il2cpp_field_static_get_value(field, &pCurPressed);
+                        break;
+                    }
+                }
+                if (pCurPressed) break;
+                pKlass = m_pfunctionInfo->il2cpp_class_get_parent(pKlass);
+            }
+            LOG(LOG_LEVEL_INFO, "[SkillRange][方式⑧] curPressedSkill=%p", pCurPressed);
+
+            if (pCurPressed && IsReadableMemory(pCurPressed, 0xC0)
+                && s_triggerDownOff != INVALID_OFFSET && s_curSkillOff != INVALID_OFFSET) {
+                bool triggerDown = *reinterpret_cast<bool*>(
+                        reinterpret_cast<uint8_t*>(pCurPressed) + s_triggerDownOff);
+                LOG(LOG_LEVEL_INFO, "[SkillRange][方式⑧] isTriggerSkillDown=%d", triggerDown);
+                if (triggerDown) {
+                    void* pActorSkill = *reinterpret_cast<void**>(
+                            reinterpret_cast<uint8_t*>(pCurPressed) + s_curSkillOff);
+                    if (pActorSkill && IsReadableMemory(pActorSkill, 0x80)) {
+                        pCastingSkill = pActorSkill;
+                        int32_t slotIdx = s_slotIndexOff != INVALID_OFFSET ?
+                            *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(pCurPressed) + s_slotIndexOff) : -1;
+                        int32_t skillID = s_oriSkillIDOff != INVALID_OFFSET ?
+                            *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(pCurPressed) + s_oriSkillIDOff) : -1;
                         LOG(LOG_LEVEL_INFO,
-                            "[SkillRange] active skill vector=%p begin=%p end=%p typeSize=%llu firstSkill=%p",
-                            (void*)pNativeVector,
-                            (void*)beginPtr,
-                            (void*)endPtr,
-                            (unsigned long long)typeSize,
-                            pCurrentSkill);
+                            "[SkillRange] ✓ 方式⑧ curPressedSkill: skill=%p slotIdx=%d oriSkillID=%d",
+                            pActorSkill, slotIdx, skillID);
                     }
                 }
             }
         }
     }
 
-    typedef bool (*FnActorSkillState)(void*, void*);
-    static FnActorSkillState s_isCasting = nullptr;
-    static FnActorSkillState s_isCast = nullptr;
-    if (!s_isCasting) {
-        s_isCasting = (FnActorSkillState)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "ActorSkill", "FrameEngine.Logic.ActorSkill",
-                "IsCasting");
-        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved ActorSkill.IsCasting=%p", (void*)s_isCasting);
-    }
-    if (!s_isCast) {
-        s_isCast = (FnActorSkillState)m_pfunctionInfo->GetMethodFun(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "ActorSkill", "FrameEngine.Logic.ActorSkill",
-                "IsCast");
-        LOG(LOG_LEVEL_INFO, "[SkillRange] resolved ActorSkill.IsCast=%p", (void*)s_isCast);
+    // ─── 通过 ActorComponentSkillMgr 从逻辑层获取正在施法的技能 ───
+    if (!pCastingSkill && pSkillMgr) {
+
+        // ── 一次性: 通过框架 API 发现字段偏移（处理加密元数据） ──
+        static bool s_fieldsDumped = false;
+        static uint32_t s_slotCurrentSkillOff = INVALID_OFFSET;
+
+        if (!s_fieldsDumped && m_pfunctionInfo) {
+            s_fieldsDumped = true;
+            LOG(LOG_LEVEL_INFO, "[SkillRange] ── 通过 GetFieldOffset API 查找偏移 ──");
+
+            // 使用框架的 GetFieldOffset（能处理加密元数据）
+            s_slotCurrentSkillOff = GetFieldOffset(
+                    "Assembly-CSharp.dll", "SkillSlot",
+                    "FrameEngine.Logic.SkillSlot", "currentSkill");
+
+            LOG(LOG_LEVEL_INFO,
+                "[SkillRange] SkillSlot: currentSkill=0x%X",
+                s_slotCurrentSkillOff);
+
+            // 备用: 如果框架 API 也失败, 尝试 il2cpp.h 中的已知偏移
+            if (s_slotCurrentSkillOff == INVALID_OFFSET || s_slotCurrentSkillOff == 0) {
+                s_slotCurrentSkillOff = 0x38;
+                LOG(LOG_LEVEL_INFO, "[SkillRange] currentSkill 回退到硬编码 0x38");
+            }
+        }
+
+        // ── 方式⑤: SkillSlot[0-4].currentSkill (运行时偏移) ──
+        {
+            typedef void* (*FnGetSlotByIdx)(void*, int32_t, void*);
+            static FnGetSlotByIdx s_getSlotByIdx = nullptr;
+            static bool s_triedSlotByIdx = false;
+            if (!s_triedSlotByIdx && m_pfunctionInfo) {
+                s_triedSlotByIdx = true;
+                s_getSlotByIdx = (FnGetSlotByIdx)m_pfunctionInfo->GetMethodFun(
+                        "ilbil2cpp.so", "Assembly-CSharp.dll",
+                        "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
+                        "GetSkillSlotByIndex");
+            }
+            if (s_getSlotByIdx && s_slotCurrentSkillOff != INVALID_OFFSET) {
+                for (int slotIdx = 0; slotIdx < 4; slotIdx++) {
+                    void* pSlotObj = s_getSlotByIdx(pSkillMgr, slotIdx, nullptr);
+                    if (!pSlotObj || !IsReadableMemory(pSlotObj, s_slotCurrentSkillOff + 8)) continue;
+                    void* pSlotCurSkill = *reinterpret_cast<void**>(
+                            reinterpret_cast<uint8_t*>(pSlotObj) + s_slotCurrentSkillOff);
+                    if (pSlotCurSkill && IsReadableMemory(pSlotCurSkill, 0x80)) {
+                        bool isCast = checkCasting(pSlotCurSkill);
+                        LOG(LOG_LEVEL_INFO, "[SkillRange] Slot[%d] curSkill(0x%X)=%p casting=%d",
+                            slotIdx, s_slotCurrentSkillOff, pSlotCurSkill, isCast);
+                        if (isCast) {
+                            pCastingSkill = pSlotCurSkill;
+                            LOG(LOG_LEVEL_INFO, "[SkillRange] ✓ 方式⑤ SkillSlot[%d].currentSkill: %p", slotIdx, pSlotCurSkill);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    bool heroIsCasting = false;
-    if (pCurrentSkill ) {
-        const bool isCasting = s_isCasting ? s_isCasting(pCurrentSkill, nullptr) : false;
-        const bool isCast = s_isCast ? s_isCast(pCurrentSkill, nullptr) : false;
-        heroIsCasting = isCasting || isCast;
-        LOG(LOG_LEVEL_INFO,
-            "[SkillRange] currentSkill=%p isCasting=%d isCast=%d heroIsCasting=%d",
-            pCurrentSkill,
-            isCasting ? 1 : 0,
-            isCast ? 1 : 0,
-            heroIsCasting ? 1 : 0);
-    }
-
-    if (heroIsCasting) {
-        pSkill = pCurrentSkill;
+    // 如果有正在释放的技能，用它替换普攻技能
+    if (pCastingSkill) {
+        pSkill = pCastingSkill;
+        LOG(LOG_LEVEL_INFO, "[SkillRange] 使用施法技能替换普攻");
+    } else {
+        LOG(LOG_LEVEL_INFO, "[SkillRange] 未找到施法技能，使用普攻");
     }
 
     if (!pSkill || !IsReadableMemory(pSkill, 0xC0)) return -1.0f;
@@ -1151,90 +1314,35 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
     return NormalAttackSkillRange;
 }
 
-
-
-
-/*
-
-    void* pCurrentSkill = nullptr;
-    if (s_getCurrentActiveList) {
-        void* pCurrentActiveList = s_getCurrentActiveList(pSkillMgr);
-        LOG(LOG_LEVEL_INFO, "[SkillRange] currentActiveList=%p", pCurrentActiveList);
-
-        if (pCurrentActiveList && IsReadableMemory((uint8_t*)pCurrentActiveList + 0x18, sizeof(void*))) {
-            void* pVectorObject = *(void**)((uint8_t*)pCurrentActiveList + 0x18);
-            if (pVectorObject && IsReadableMemory((uint8_t*)pVectorObject + 0x10, sizeof(uintptr_t))) {
-                uintptr_t pNativeVector = *(uintptr_t*)((uint8_t*)pVectorObject + 0x10);
-                if (pNativeVector && IsReadableMemory((void*)pNativeVector, 0x20)) {
-                    uintptr_t beginPtr = *(uintptr_t*)(pNativeVector + 0x0);
-                    uintptr_t endPtr = *(uintptr_t*)(pNativeVector + 0x8);
-                    uint64_t typeSize = *(uint64_t*)(pNativeVector + 0x18);
-
-                    if (beginPtr && endPtr >= beginPtr && typeSize >= sizeof(void*) &&
-                        IsReadableMemory((void*)beginPtr, sizeof(void*))) {
-                        pCurrentSkill = *(void**)beginPtr;
-                        LOG(LOG_LEVEL_INFO,
-                            "[SkillRange] active skill vector=%p begin=%p end=%p typeSize=%llu firstSkill=%p",
-                            (void*)pNativeVector,
-                            (void*)beginPtr,
-                            (void*)endPtr,
-                            (unsigned long long)typeSize,
-                            pCurrentSkill);
-                    }
-                }
-            }
-        }
-
-*/
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// getSkillUILogic — 获取指定技能的 SkillUILogic UI 控制对象
-//
-// 路径: BattleSkillJoystickUILogic._instance (静态单例)
-//       → GetSkillUILogic(int skillID) 按 oriSkillID 遍历匹配
-//
-// BattleSkillJoystickUILogic 类信息:
-//   静态字段 _instance  → Il2CppClass 静态字段表偏移 0x0
-//   实例字段 skillUILogics → +0x20 (List<SkillUILogic>)
-//
-// SkillUILogic 关键字段:
-//   +0x14  oriSkillID (int)
-//   +0xB8  _curSkill  (ActorSkill*)
-//   +0xB0  _curSlotIndex (int)
-//   +0xE5  skillState (SkillStateWrap)
-//
-// IDA RVA: BattleSkillJoystickUILogic.Awake       = 0x607a454
-//          BattleSkillJoystickUILogic._instance    → off_EB7CBB0 静态字段
-//          GetSkillUILogic(int skillID)            = 0x608170c
-//          SkillUILogic.get_curSkill()             = 0x527abf8
-//          SkillUILogic.get_curSkillID()           = 0x5276c44
+// getSkillUILogic — 获取 SkillUILogic UI 控制对象
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void* lol::FEVisi::getSkillUILogicInstance() {
-    // 1. 获取 BattleSkillJoystickUILogic 的 Il2CppClass
-    static ::Il2CppClass* s_joystickUIClass = nullptr;
+    static Il2CppClass* s_joystickUIClass = nullptr;
     if (!s_joystickUIClass && m_pfunctionInfo) {
-        s_joystickUIClass = m_pfunctionInfo->FindClassByName(
-                "ilbil2cpp.so", "Assembly-CSharp.dll",
-                "BattleSkillJoystickUILogic", "");
-        LOG(LOG_LEVEL_INFO, "[SkillUI] resolved BattleSkillJoystickUILogic class=%p", (void*)s_joystickUIClass);
+        s_joystickUIClass = reinterpret_cast<Il2CppClass*>(
+                m_pfunctionInfo->FindClassByName(
+                    "ilbil2cpp.so", "Assembly-CSharp.dll",
+                    "BattleSkillJoystickUILogic", ""));
+        LOG(LOG_LEVEL_INFO, "[SkillUI] FindClass BattleSkillJoystickUILogic=%p", s_joystickUIClass);
     }
     if (!s_joystickUIClass) {
-        LOG(LOG_LEVEL_WARN, "[SkillUI] BattleSkillJoystickUILogic class not found");
+        LOG(LOG_LEVEL_WARN, "[SkillUI] joystickUIClass 为空");
         return nullptr;
     }
 
-    // 2. 读取静态字段 _instance
-    //    Il2CppClass + 0xB8(ARM64) = static_fields 指针
-    //    _instance 偏移 0x0
-    void* pStaticFields = *(void**)((uint8_t*)s_joystickUIClass + 0xB8);
-    if (!pStaticFields || !IsReadableMemory(pStaticFields, sizeof(void*))) {
-        LOG(LOG_LEVEL_WARN, "[SkillUI] static_fields 不可读 class=%p", (void*)s_joystickUIClass);
+    auto* pStaticFields = reinterpret_cast<BattleSkillJoystickUILogic_StaticFields*>(
+            s_joystickUIClass->static_fields);
+    if (!pStaticFields || !IsReadableMemory(pStaticFields, sizeof(BattleSkillJoystickUILogic_StaticFields))) {
+        LOG(LOG_LEVEL_WARN, "[SkillUI] static_fields=%p 不可读", s_joystickUIClass->static_fields);
         return nullptr;
     }
-    void* pInstance = *(void**)pStaticFields; // _instance 在偏移 0x0
-    if (!pInstance || !IsReadableMemory(pInstance, 0x30)) {
-        return nullptr; // 非战斗态或还未初始化
+
+    auto* pInstance = pStaticFields->instance;
+    if (!pInstance || !IsReadableMemory(pInstance, sizeof(BattleSkillJoystickUILogic_o))) {
+        LOG(LOG_LEVEL_WARN, "[SkillUI] instance=%p 不可读", pStaticFields->instance);
+        return nullptr;
     }
     return pInstance;
 }
@@ -1243,7 +1351,6 @@ void* lol::FEVisi::getSkillUILogic(int skillID) {
     void* pInstance = getSkillUILogicInstance();
     if (!pInstance) return nullptr;
 
-    // 调用 GetSkillUILogic(int skillID) — RVA: 0x608170c
     typedef void* (*FnGetSkillUILogic)(void*, int, void*);
     static FnGetSkillUILogic s_getSkillUILogic = nullptr;
     if (!s_getSkillUILogic && m_pfunctionInfo) {
@@ -1251,34 +1358,44 @@ void* lol::FEVisi::getSkillUILogic(int skillID) {
                 "ilbil2cpp.so", "Assembly-CSharp.dll",
                 "BattleSkillJoystickUILogic", "",
                 "GetSkillUILogic");
-        LOG(LOG_LEVEL_INFO, "[SkillUI] resolved GetSkillUILogic(int)=%p", (void*)s_getSkillUILogic);
     }
     if (!s_getSkillUILogic) return nullptr;
-
-    void* pLogic = s_getSkillUILogic(pInstance, skillID, nullptr);
-    LOG(LOG_LEVEL_INFO, "[SkillUI] GetSkillUILogic(skillID=%d) → %p", skillID, pLogic);
-    return pLogic;
+    return s_getSkillUILogic(pInstance, skillID, nullptr);
 }
 
 std::vector<void*> lol::FEVisi::getAllSkillUILogics() {
     std::vector<void*> result;
-    void* pInstance = getSkillUILogicInstance();
-    if (!pInstance) return result;
+    void* pRawInstance = getSkillUILogicInstance();
+    if (!pRawInstance) {
+        LOG(LOG_LEVEL_WARN, "[SkillUI] getAllSkillUILogics: instance 为空");
+        return result;
+    }
 
-    // skillUILogics 字段偏移 0x20 → List<SkillUILogic>
-    void* pList = *(void**)((uint8_t*)pInstance + 0x20);
-    if (!pList || !IsReadableMemory(pList, 0x20)) return result;
+    auto* pInstance = reinterpret_cast<BattleSkillJoystickUILogic_o*>(pRawInstance);
+    auto* pList = pInstance->fields.skillUILogics;
+    if (!pList || !IsReadableMemory(pList, sizeof(Il2CppGenericList))) {
+        LOG(LOG_LEVEL_WARN, "[SkillUI] skillUILogics list=%p 不可读", pInstance->fields.skillUILogics);
+        return result;
+    }
 
-    // C# List<T> 内存布局: +0x10 = _items (Array*), +0x18 = _size (int)
-    void* pItems = *(void**)((uint8_t*)pList + 0x10);
-    int size = *(int*)((uint8_t*)pList + 0x18);
-    if (!pItems || size <= 0 || size > 20) return result;
-    if (!IsReadableMemory((uint8_t*)pItems + 0x20, size * sizeof(void*))) return result;
+    auto* pItems = reinterpret_cast<Il2CppGenericArrayHeader*>(pList->_items);
+    int size = pList->_size;
+    LOG(LOG_LEVEL_INFO, "[SkillUI] list: _items=%p _size=%d", pList->_items, size);
+    if (!pItems || size <= 0 || size > 20) {
+        LOG(LOG_LEVEL_WARN, "[SkillUI] list 无效: _items=%p size=%d", (void*)pItems, size);
+        return result;
+    }
 
-    // C# Array 内存布局: +0x20 = 第一个元素
+    auto** elements = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(pItems) + sizeof(Il2CppGenericArrayHeader));
+    if (!IsReadableMemory(elements, size * sizeof(void*))) {
+        LOG(LOG_LEVEL_WARN, "[SkillUI] elements 内存不可读");
+        return result;
+    }
+
     for (int i = 0; i < size; i++) {
-        void* pLogic = *(void**)((uint8_t*)pItems + 0x20 + i * sizeof(void*));
-        if (pLogic) result.push_back(pLogic);
+        if (elements[i]) result.push_back(elements[i]);
     }
     return result;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════

@@ -982,6 +982,81 @@ namespace lol{
         struct System_Collections_Generic_Stack_System_Object_o* wrapperPool; // 0x0
     };
 
+    struct SkillUILogic_Fields {
+    float displayRadiusSqr; /* 0x10 */
+    int32_t oriSkillID; /* 0x14 */
+    void* slot; /* 0x18 */
+    int32_t currentLevel; /* 0x20 */
+    bool isStealSkill; /* 0x24 */
+    bool isGameOver; /* 0x25 */
+    char _pad26[2];
+    int32_t maxLevel; /* 0x28 */
+    bool isSkillR; /* 0x2C */
+    bool m_isActive; /* 0x2D */
+    char _pad2e[2];
+    int32_t joystickType; /* 0x30 */
+    uint8_t sortIndex; /* 0x34 */
+    char _pad35[3];
+    void* skillCtrl; /* 0x38 */
+    void* skillUpgradeCtrl; /* 0x40 */
+    void* joystick; /* 0x48 */
+    bool isInitBasePunishSkill; /* 0x50 */
+    bool isInitWardSwitchSkill; /* 0x51 */
+    char _pad52[6];
+    void* wardSkillIds; /* 0x58 */
+    void* joysInfomation; /* 0x60 */
+    void* skillHandlerMgr; /* 0x68 */
+    void* actor; /* 0x70 */
+    void* curSkillOperRes; /* 0x78 */
+    bool isShowCooling; /* 0x80 */
+    char _pad81[3];
+    float deadZoneRadius; /* 0x84 */
+    bool isTriggerSkillDown; /* 0x88 */
+    bool isPassiveSkill; /* 0x89 */
+    bool isSkillDisable; /* 0x8A */
+    bool isPassiveSkillHighlight; /* 0x8B */
+    bool isSkillCannotCastEnable; /* 0x8C */
+    bool cannotcast; /* 0x8D */
+    char _pad8e[2];
+    void* rpnFormulaStr; /* 0x90 */
+    int32_t rpnFormulaBuffId; /* 0x98 */
+    float lastCalDmgTime; /* 0x9C */
+    float lastFingerUIPos_x; /* 0xA0 */
+    float lastFingerUIPos_y; /* 0xA4 */
+    void* OnUpgradeShowHide; /* 0xA8 */
+    int32_t curSlotIndex; /* 0xB0 */
+    char _padB4[4];
+    void* curSkill; /* 0xB8 */
 };
+struct SkillUILogic_VTable {
+    VirtualInvokeData _0_dummy;
+};
+struct SkillUILogic_c {
+    Il2CppClass_1 _1;
+    struct SkillUILogic_StaticFields* static_fields;
+    Il2CppRGCTXData* rgctx_data;
+    Il2CppClass_2 _2;
+    SkillUILogic_VTable vtable;
+};
+struct SkillUILogic_o {
+    SkillUILogic_c *klass;
+    void *monitor;
+    SkillUILogic_Fields fields;
+};
+struct SkillUILogic_StaticFields {
+    struct SkillUILogic_o* curPressedSkill; /* 0x0 */
+    bool isTriggerSkillWhenForbidden; /* 0x8 */
+    float ThresholdTimeShowTips; /* 0xC */
+    bool shouldRequestPlayerControl; /* 0x10 */
+    bool shouldTriggerIndicator; /* 0x11 */
+    bool awalyTryTouchDown; /* 0x12 */
+    bool allowDragSkill; /* 0x13 */
+    bool isActiveWardSwitchPanel; /* 0x14 */
+};
+
+};
+
+// 导入 il2cpp.h 中的完整结构体定义 (SkillUILogic, BattleSkillJoystickUILogic 等)
+#include "../il2cppGenerated/il2cpp_structs.h"
 
 #endif //DOBBY_PROJECT_LOLHEADER_H
