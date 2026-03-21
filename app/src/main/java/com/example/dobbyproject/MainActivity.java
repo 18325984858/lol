@@ -41,8 +41,10 @@ package com.example.dobbyproject;
 
 import androidx.appcompat.app.AppCompatActivity;
 import android.os.Bundle;
+import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.TextView;
-import com.example.dobbyproject.databinding.ActivityMainBinding;
+import android.widget.Toast;
 
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
@@ -85,34 +87,288 @@ public class MainActivity extends AppCompatActivity {
 
     String g_nativeLibPath = "";
 
-    private ActivityMainBinding binding;
+    // 状态跟踪
+    private boolean selinuxDone = false;
+    private boolean inputPermDone = false;
+    private boolean fontDone = false;
+    private boolean launchDone = false;
+    private TextView tvStatus;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        //获取 so 路径
+        setContentView(R.layout.activity_main);
+
         g_nativeLibPath = getApplicationContext().getApplicationInfo().nativeLibraryDir;
 
-        //设置宽容模式
-        setSelinuxPermissive();
-
-        //修改输入设备权限
-        fixInputPermission();
-
-        //部署中文字体到 /data/local/tmp/
-        deployChineseFont();
-
-        //全局拷贝 so 到目标程序
-        writeFiletoTargetProgram();
-
-        //启动目标进程并注入 SO
-        launchAndInject();
-
-        binding = ActivityMainBinding.inflate(getLayoutInflater());
-        setContentView(binding.getRoot());
-
-        TextView tv = binding.sampleText;
+        TextView tv = findViewById(R.id.sample_text);
         tv.setText(stringFromJNI());
+        tvStatus = findViewById(R.id.tv_status);
+
+        CheckBox cbDumper = findViewById(R.id.cb_dumper);
+        CheckBox cbHeader = findViewById(R.id.cb_header);
+        CheckBox cbLog = findViewById(R.id.cb_log);
+
+        Button btnSelinux = findViewById(R.id.btn_selinux);
+        Button btnInputPerm = findViewById(R.id.btn_input_perm);
+        Button btnFont = findViewById(R.id.btn_deploy_font);
+        Button btnLaunch = findViewById(R.id.btn_launch);
+
+        // ── 启动时初始化检测 ──
+        updateStatus("正在检测环境...");
+        new Thread(() -> {
+            boolean selinuxOk = checkSelinuxPermissive();
+            boolean inputOk = checkInputPermission();
+            boolean fontOk = checkFileExists("/data/local/tmp/chinese.ttf");
+            boolean gameInstalled = checkGameInstalled();
+
+            runOnUiThread(() -> {
+                StringBuilder sb = new StringBuilder();
+                if (selinuxOk) {
+                    selinuxDone = true;
+                    btnSelinux.setText("✅ 宽容模式已设置");
+                    btnSelinux.setEnabled(false);
+                    sb.append("宽容模式 ✓  ");
+                }
+                if (inputOk) {
+                    inputPermDone = true;
+                    btnInputPerm.setText("✅ 输入权限已修改");
+                    btnInputPerm.setEnabled(false);
+                    sb.append("输入权限 ✓  ");
+                }
+                if (fontOk) {
+                    fontDone = true;
+                    btnFont.setText("✅ 字体已部署");
+                    btnFont.setEnabled(false);
+                    sb.append("字体 ✓  ");
+                }
+                if (!gameInstalled) {
+                    btnLaunch.setEnabled(false);
+                    btnLaunch.setText("⚠ 游戏未安装");
+                    sb.append("游戏未安装 ✗");
+                } else {
+                    sb.append("游戏已安装 ✓");
+                }
+                updateStatus(sb.length() > 0 ? sb.toString().trim() : "就绪");
+            });
+        }).start();
+
+        // ① 设置宽容模式
+        btnSelinux.setOnClickListener(v -> {
+            if (selinuxDone) {
+                Toast.makeText(this, "已设置过宽容模式，无需重复操作", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            btnSelinux.setEnabled(false);
+            setSelinuxPermissive();
+            selinuxDone = true;
+            btnSelinux.setText("✅ 宽容模式已设置");
+            updateStatus("宽容模式 ✓");
+            Toast.makeText(this, "宽容模式已设置", Toast.LENGTH_SHORT).show();
+        });
+
+        // ② 修改输入设备权限
+        btnInputPerm.setOnClickListener(v -> {
+            if (inputPermDone) {
+                Toast.makeText(this, "输入权限已修改过，无需重复操作", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            btnInputPerm.setEnabled(false);
+            fixInputPermission();
+            inputPermDone = true;
+            btnInputPerm.setText("✅ 输入权限已修改");
+            updateStatus("输入权限 ✓");
+            Toast.makeText(this, "输入设备权限已修改", Toast.LENGTH_SHORT).show();
+        });
+
+        // ③ 部署中文字体
+        btnFont.setOnClickListener(v -> {
+            if (fontDone) {
+                Toast.makeText(this, "字体已部署过，无需重复操作", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            btnFont.setEnabled(false);
+            deployChineseFont();
+            fontDone = true;
+            btnFont.setText("✅ 字体已部署");
+            updateStatus("字体部署 ✓");
+            Toast.makeText(this, "字体部署完成", Toast.LENGTH_SHORT).show();
+        });
+
+        // ④ 启动游戏
+        btnLaunch.setOnClickListener(v -> {
+            if (launchDone) {
+                Toast.makeText(this, "游戏已启动过，请勿重复注入", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            // 初始化检测: 确保前置步骤已完成
+            if (!selinuxDone) {
+                Toast.makeText(this, "请先设置宽容模式", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            btnLaunch.setEnabled(false);
+            launchDone = true;
+
+            boolean enableDumper = cbDumper.isChecked();
+            boolean enableHeader = cbHeader.isChecked();
+            boolean enableLog = cbLog.isChecked();
+
+            // 清除旧的完成标记
+            clearDumpMarkers();
+
+            writeFiletoTargetProgram();
+            launchAndInject(enableDumper, enableHeader, enableLog);
+
+            // 如果勾选了 dump，启动后台轮询等待完成
+            if (enableDumper || enableHeader) {
+                pollDumpCompletion(enableDumper, enableHeader);
+            }
+
+            String options = "";
+            if (enableDumper) options += " [Dumper]";
+            if (enableHeader) options += " [Header]";
+            btnLaunch.setText("✅ 游戏已启动" + options);
+            updateStatus("游戏启动中..." + options);
+            Toast.makeText(this, "正在启动游戏并注入..." + options, Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    private void updateStatus(String msg) {
+        if (tvStatus != null) tvStatus.setText(msg);
+    }
+
+    /**
+     * 清除旧的 dump 完成标记文件
+     */
+    private void clearDumpMarkers() {
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("rm -f /data/local/tmp/dobby_dumper_done /data/local/tmp/dobby_header_done\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            p.waitFor();
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * 后台轮询 dump 完成标记文件，完成后在 UI 线程弹 Toast
+     */
+    private void pollDumpCompletion(boolean waitDumper, boolean waitHeader) {
+        new Thread(() -> {
+            boolean dumperDone = !waitDumper;
+            boolean headerDone = !waitHeader;
+            int maxWait = 300; // 最多等 5 分钟 (300 × 1s)
+
+            for (int i = 0; i < maxWait && (!dumperDone || !headerDone); i++) {
+                try { Thread.sleep(1000); } catch (InterruptedException ignored) { return; }
+
+                if (!dumperDone) {
+                    dumperDone = checkFileExists("/data/local/tmp/dobby_dumper_done");
+                    if (dumperDone) {
+                        runOnUiThread(() -> {
+                            Toast.makeText(this, "✓ il2cppDumper 导出完成！", Toast.LENGTH_LONG).show();
+                            updateStatus("Dumper 导出完成 ✓");
+                        });
+                    }
+                }
+                if (!headerDone) {
+                    headerDone = checkFileExists("/data/local/tmp/dobby_header_done");
+                    if (headerDone) {
+                        runOnUiThread(() -> {
+                            Toast.makeText(this, "✓ il2cppHeader 导出完成！", Toast.LENGTH_LONG).show();
+                            updateStatus("Header 导出完成 ✓");
+                        });
+                    }
+                }
+            }
+
+            if (dumperDone && headerDone) {
+                runOnUiThread(() -> {
+                    String msg = "全部导出完成 ✓";
+                    updateStatus(msg);
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+                });
+            }
+        }).start();
+    }
+
+    private boolean checkFileExists(String path) {
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("test -f " + path + " && echo YES\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains("YES")) { p.waitFor(); return true; }
+            }
+            p.waitFor();
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /**
+     * 检测 SELinux 是否已经是 Permissive 模式
+     */
+    private boolean checkSelinuxPermissive() {
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("getenforce\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().equalsIgnoreCase("Permissive")) { p.waitFor(); return true; }
+            }
+            p.waitFor();
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /**
+     * 检测 /dev/input/event* 是否已有 666 权限 (other 可读写)
+     */
+    private boolean checkInputPermission() {
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("ls -l /dev/input/event0 | grep -q 'crw-rw-rw' && echo OK\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains("OK")) { p.waitFor(); return true; }
+            }
+            p.waitFor();
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /**
+     * 检测目标游戏是否已安装（通过 root 权限绕过 Android 11+ 包可见性限制）
+     */
+    private boolean checkGameInstalled() {
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("pm list packages " + g_packFileName + " | grep -q " + g_packFileName + " && echo INSTALLED\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains("INSTALLED")) { p.waitFor(); return true; }
+            }
+            p.waitFor();
+        } catch (Exception ignored) {}
+        return false;
     }
 
     public native String stringFromJNI();
@@ -156,7 +412,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public void launchAndInject() {
+    public void launchAndInject(boolean enableDumper, boolean enableHeader, boolean enableLog) {
         String soPath = "/data/data/" + g_packFileName + "/files/libdobbyproject.so";
         String injectorSrc = g_nativeLibPath + (g_nativeLibPath.endsWith("/") ? "" : "/") + "libinjector.so";
         String injectorDst = "/data/local/tmp/injector";
@@ -226,6 +482,24 @@ public class MainActivity extends AppCompatActivity {
 
             // 通过 su 执行 injector (root 权限, 可以 ptrace)
             LogUtil.i("[注入流程] 以 root 身份执行 injector...");
+
+            // 写入配置文件，告知 C++ 层是否启用 Dumper/Header
+            try {
+                Process cfgP = Runtime.getRuntime().exec("su");
+                DataOutputStream cfgOs = new DataOutputStream(cfgP.getOutputStream());
+                String cfgContent = "dumper=" + (enableDumper ? "1" : "0") + "\n"
+                                  + "header=" + (enableHeader ? "1" : "0") + "\n"
+                                  + "log=" + (enableLog ? "1" : "0") + "\n";
+                cfgOs.writeBytes("echo '" + cfgContent + "' > /data/local/tmp/dobby_config.txt\n");
+                cfgOs.writeBytes("chmod 644 /data/local/tmp/dobby_config.txt\n");
+                cfgOs.writeBytes("exit\n");
+                cfgOs.flush();
+                cfgP.waitFor();
+                LogUtil.i("[注入流程] 配置文件已写入: dumper=" + enableDumper + " header=" + enableHeader);
+            } catch (Exception e) {
+                LogUtil.e("[注入流程] 写入配置文件异常: " + e.getMessage(), e);
+            }
+
             long startTime = System.currentTimeMillis();
             try {
                 Process p = Runtime.getRuntime().exec("su");

@@ -38,9 +38,12 @@
  */
 #if ENABLE_LOGGING
 
+/** @brief 运行时日志开关（默认启用，可通过配置文件关闭） */
+inline bool g_runtimeLogEnabled = true;
+
 #define LOG(level, fmt, ...) \
         do { \
-            if (level >= CURRENT_LOG_LEVEL) { \
+            if (g_runtimeLogEnabled && level >= CURRENT_LOG_LEVEL) { \
                 int priority = ANDROID_LOG_INFO; \
                 if (level == LOG_LEVEL_INFO) priority = ANDROID_LOG_INFO; \
                 else if (level == LOG_LEVEL_WARN) priority = ANDROID_LOG_WARN; \

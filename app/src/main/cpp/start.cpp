@@ -812,6 +812,34 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// 读取 /data/local/tmp/dobby_config.txt 配置文件
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct DobbyConfig {
+    bool enableDumper = false;
+    bool enableHeader = false;
+    bool enableLog = true;
+};
+
+static DobbyConfig readDobbyConfig() {
+    DobbyConfig cfg;
+    int fd = open("/data/local/tmp/dobby_config.txt", O_RDONLY);
+    if (fd < 0) return cfg;
+    char buf[256] = {};
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return cfg;
+    buf[n] = '\0';
+    if (strstr(buf, "dumper=1")) cfg.enableDumper = true;
+    if (strstr(buf, "header=1")) cfg.enableHeader = true;
+    if (strstr(buf, "log=0")) cfg.enableLog = false;
+    // 应用日志开关
+    g_runtimeLogEnabled = cfg.enableLog;
+    LOG(LOG_LEVEL_INFO, "[Config] dumper=%d header=%d log=%d", cfg.enableDumper ? 1 : 0, cfg.enableHeader ? 1 : 0, cfg.enableLog ? 1 : 0);
+    return cfg;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MyStartPoint — 注入入口
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -825,6 +853,35 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
         LOG(LOG_LEVEL_INFO, "[MyStartPoint] 注入模式 — 启动数据采集 + eglSwapBuffers Hook 绘制");
         installCrashGuard();
+
+        // 读取配置
+        DobbyConfig config = readDobbyConfig();
+
+        // 按配置在独立线程中执行 Dumper / Header（不阻塞主注入流程）
+        if (config.enableHeader) {
+            std::thread([=]() {
+                LOG(LOG_LEVEL_INFO, "[MyStartPoint] [线程] 启用 il2cppHeader — 导出头文件");
+                li2cppHeader::li2cppHeader il2cppH(pli2cppModeBase, pCodeRegistration,
+                                                   pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
+                il2cppH.start();
+                LOG(LOG_LEVEL_INFO, "[MyStartPoint] [线程] il2cppHeader 完成");
+                // 写入完成标记
+                int fd = open("/data/local/tmp/dobby_header_done", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd >= 0) { write(fd, "done", 4); close(fd); }
+            }).detach();
+        }
+        if (config.enableDumper) {
+            std::thread([=]() {
+                LOG(LOG_LEVEL_INFO, "[MyStartPoint] [线程] 启用 il2cppDumper — 导出 dump");
+                li2cpp::li2cppDumper il2cppD(pli2cppModeBase, pCodeRegistration,
+                                             pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
+                il2cppD.initInfo();
+                LOG(LOG_LEVEL_INFO, "[MyStartPoint] [线程] il2cppDumper 完成");
+                // 写入完成标记
+                int fd = open("/data/local/tmp/dobby_dumper_done", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd >= 0) { write(fd, "done", 4); close(fd); }
+            }).detach();
+        }
 
         std::thread(GuiNativeThread).detach();
 

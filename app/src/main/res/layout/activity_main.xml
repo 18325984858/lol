@@ -1,19 +1,99 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     tools:context=".MainActivity">
 
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:padding="24dp">
+
     <TextView
         android:id="@+id/sample_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Hello World!"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        android:text="DobbyProject"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="24dp" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+    <!-- 设置宽容模式 -->
+    <Button
+        android:id="@+id/btn_selinux"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="① 设置宽容模式"
+        android:layout_marginBottom="8dp" />
+
+    <!-- 修改输入设备权限 -->
+    <Button
+        android:id="@+id/btn_input_perm"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="② 修改输入设备权限"
+        android:layout_marginBottom="8dp" />
+
+    <!-- 部署中文字体 -->
+    <Button
+        android:id="@+id/btn_deploy_font"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="③ 部署中文字体"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 分隔线 -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#CCCCCC"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 可选: il2cppDumper / il2cppHeader -->
+    <CheckBox
+        android:id="@+id/cb_dumper"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="启用 il2cppDumper (导出 dump)"
+        android:checked="false"
+        android:layout_marginBottom="4dp" />
+
+    <CheckBox
+        android:id="@+id/cb_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="启用 il2cppHeader (导出头文件)"
+        android:checked="false"
+        android:layout_marginBottom="4dp" />
+
+    <CheckBox
+        android:id="@+id/cb_log"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="启用日志输出"
+        android:checked="true"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 启动游戏 -->
+    <Button
+        android:id="@+id/btn_launch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="④ 启动游戏"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 状态显示 -->
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="就绪"
+        android:textSize="13sp"
+        android:textColor="#666666"
+        android:lineSpacingExtra="4dp" />
+
+</LinearLayout>
+</ScrollView>

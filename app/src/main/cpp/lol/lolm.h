@@ -244,6 +244,25 @@ namespace lol {
          */
         float getMySkillValidTargetRange(void* actorVisi);
 
+        /**
+         * @brief  获取 BattleSkillJoystickUILogic 单例实例
+         * @return 单例指针，非战斗态返回 nullptr
+         */
+        void* getSkillUILogicInstance();
+
+        /**
+         * @brief  按 skillID 获取对应的 SkillUILogic 对象
+         * @param  skillID  技能配置ID（oriSkillID）
+         * @return SkillUILogic 对象指针，未找到返回 nullptr
+         */
+        void* getSkillUILogic(int skillID);
+
+        /**
+         * @brief  获取所有 SkillUILogic 对象列表
+         * @return SkillUILogic 指针数组
+         */
+        std::vector<void*> getAllSkillUILogics();
+
     private:
 
         /**

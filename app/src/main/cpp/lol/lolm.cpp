@@ -1186,3 +1186,99 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
         }
 
 */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// getSkillUILogic — 获取指定技能的 SkillUILogic UI 控制对象
+//
+// 路径: BattleSkillJoystickUILogic._instance (静态单例)
+//       → GetSkillUILogic(int skillID) 按 oriSkillID 遍历匹配
+//
+// BattleSkillJoystickUILogic 类信息:
+//   静态字段 _instance  → Il2CppClass 静态字段表偏移 0x0
+//   实例字段 skillUILogics → +0x20 (List<SkillUILogic>)
+//
+// SkillUILogic 关键字段:
+//   +0x14  oriSkillID (int)
+//   +0xB8  _curSkill  (ActorSkill*)
+//   +0xB0  _curSlotIndex (int)
+//   +0xE5  skillState (SkillStateWrap)
+//
+// IDA RVA: BattleSkillJoystickUILogic.Awake       = 0x607a454
+//          BattleSkillJoystickUILogic._instance    → off_EB7CBB0 静态字段
+//          GetSkillUILogic(int skillID)            = 0x608170c
+//          SkillUILogic.get_curSkill()             = 0x527abf8
+//          SkillUILogic.get_curSkillID()           = 0x5276c44
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void* lol::FEVisi::getSkillUILogicInstance() {
+    // 1. 获取 BattleSkillJoystickUILogic 的 Il2CppClass
+    static ::Il2CppClass* s_joystickUIClass = nullptr;
+    if (!s_joystickUIClass && m_pfunctionInfo) {
+        s_joystickUIClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleSkillJoystickUILogic", "");
+        LOG(LOG_LEVEL_INFO, "[SkillUI] resolved BattleSkillJoystickUILogic class=%p", (void*)s_joystickUIClass);
+    }
+    if (!s_joystickUIClass) {
+        LOG(LOG_LEVEL_WARN, "[SkillUI] BattleSkillJoystickUILogic class not found");
+        return nullptr;
+    }
+
+    // 2. 读取静态字段 _instance
+    //    Il2CppClass + 0xB8(ARM64) = static_fields 指针
+    //    _instance 偏移 0x0
+    void* pStaticFields = *(void**)((uint8_t*)s_joystickUIClass + 0xB8);
+    if (!pStaticFields || !IsReadableMemory(pStaticFields, sizeof(void*))) {
+        LOG(LOG_LEVEL_WARN, "[SkillUI] static_fields 不可读 class=%p", (void*)s_joystickUIClass);
+        return nullptr;
+    }
+    void* pInstance = *(void**)pStaticFields; // _instance 在偏移 0x0
+    if (!pInstance || !IsReadableMemory(pInstance, 0x30)) {
+        return nullptr; // 非战斗态或还未初始化
+    }
+    return pInstance;
+}
+
+void* lol::FEVisi::getSkillUILogic(int skillID) {
+    void* pInstance = getSkillUILogicInstance();
+    if (!pInstance) return nullptr;
+
+    // 调用 GetSkillUILogic(int skillID) — RVA: 0x608170c
+    typedef void* (*FnGetSkillUILogic)(void*, int, void*);
+    static FnGetSkillUILogic s_getSkillUILogic = nullptr;
+    if (!s_getSkillUILogic && m_pfunctionInfo) {
+        s_getSkillUILogic = (FnGetSkillUILogic)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleSkillJoystickUILogic", "",
+                "GetSkillUILogic");
+        LOG(LOG_LEVEL_INFO, "[SkillUI] resolved GetSkillUILogic(int)=%p", (void*)s_getSkillUILogic);
+    }
+    if (!s_getSkillUILogic) return nullptr;
+
+    void* pLogic = s_getSkillUILogic(pInstance, skillID, nullptr);
+    LOG(LOG_LEVEL_INFO, "[SkillUI] GetSkillUILogic(skillID=%d) → %p", skillID, pLogic);
+    return pLogic;
+}
+
+std::vector<void*> lol::FEVisi::getAllSkillUILogics() {
+    std::vector<void*> result;
+    void* pInstance = getSkillUILogicInstance();
+    if (!pInstance) return result;
+
+    // skillUILogics 字段偏移 0x20 → List<SkillUILogic>
+    void* pList = *(void**)((uint8_t*)pInstance + 0x20);
+    if (!pList || !IsReadableMemory(pList, 0x20)) return result;
+
+    // C# List<T> 内存布局: +0x10 = _items (Array*), +0x18 = _size (int)
+    void* pItems = *(void**)((uint8_t*)pList + 0x10);
+    int size = *(int*)((uint8_t*)pList + 0x18);
+    if (!pItems || size <= 0 || size > 20) return result;
+    if (!IsReadableMemory((uint8_t*)pItems + 0x20, size * sizeof(void*))) return result;
+
+    // C# Array 内存布局: +0x20 = 第一个元素
+    for (int i = 0; i < size; i++) {
+        void* pLogic = *(void**)((uint8_t*)pItems + 0x20 + i * sizeof(void*));
+        if (pLogic) result.push_back(pLogic);
+    }
+    return result;
+}
