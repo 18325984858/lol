@@ -53,6 +53,9 @@ namespace lol {
         UnityVector3 worldPos;      ///< 世界坐标
         bool         hasWorldPos;   ///< 坐标是否有效
         int32_t      iconType;      ///< 图标类型
+        float        screenX;       ///< 屏幕坐标 X
+        float        screenY;       ///< 屏幕坐标 Y
+        bool         hasScreenPos;  ///< 屏幕坐标是否有效
     };
 
     /** @brief 小地图一次遍历的全部数据快照 */
@@ -242,7 +245,7 @@ namespace lol {
          *          → get_targetSystem() → TargetSystem
          *          → GetSkillValidTargetRange(currentSkill) → Fix64 → float
          */
-        float getMySkillValidTargetRange(void* actorVisi);
+        float getMySkillValidTargetRange(void* actorVisi, bool isSelf = false);
 
         void* getSkillUILogicInstance();
         void* getSkillUILogic(int skillID);

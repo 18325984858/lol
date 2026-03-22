@@ -882,7 +882,8 @@ void *lol::FEVisi::updateMiniMapData() {
             // ── 所有英雄: 获取普攻有效范围 ──
             info.atkRange = -1.0f;
             if (actor && IsReadableMemory(actor, sizeof(void*))) {
-                float skillRange = getMySkillValidTargetRange(actor);
+                bool isSelf = ((MiniMapIconType)iconType == MiniMapIconType_MyTeamHero);
+                float skillRange = getMySkillValidTargetRange(actor, isSelf);
                 if (skillRange > 0.0f) info.atkRange = skillRange;
             }
 
@@ -914,6 +915,15 @@ void *lol::FEVisi::updateMiniMapData() {
             ward.worldPos    = worldPos;
             ward.hasWorldPos = hasWorldPos;
             ward.iconType    = iconType;
+            ward.hasScreenPos = false;
+            if (hasWorldPos) {
+                float sx = 0.0f, sy = 0.0f;
+                if (worldToScreen(worldPos, sx, sy)) {
+                    ward.screenX      = sx;
+                    ward.screenY      = sy;
+                    ward.hasScreenPos = true;
+                }
+            }
             m_miniMapData.wards.push_back(ward);
         }
     }
@@ -1018,7 +1028,7 @@ std::string lol::FEVisi::readIl2CppString(void* pIl2CppString) {
 // 若失败，使用普攻技能 (GetNormalAttackSkill) 的 get_curRange。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
+float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi, bool isSelf) {
     if (!actorVisi) return -1.0f;
 
     // 1. BattleActorVisi → get_actor() → BattleActor
@@ -1151,7 +1161,8 @@ float lol::FEVisi::getMySkillValidTargetRange(void* actorVisi) {
 
     // ─── 方式⑧: 通过 il2cpp 反射 API 读取 SkillUILogic.curPressedSkill 静态字段 ───
     // 当玩家按下技能图标、出现蓝色瞄准圈时，curPressedSkill != null
-    {
+    // 仅己方英雄触发，避免将自己的 UI 状态错误应用到敌方英雄
+    if (isSelf) {
         static ::Il2CppClass* s_skillUILogicKlass = nullptr;
         static uint32_t s_triggerDownOff = INVALID_OFFSET;
         static uint32_t s_curSkillOff    = INVALID_OFFSET;
