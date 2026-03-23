@@ -12,7 +12,7 @@
  *     └─ su → chmod 666 /dev/input/event*  (开放触摸输入设备权限)
  *
  *  3. writeFiletoTargetProgram()
- *     └─ su -M → cp libdobbyproject.so → /data/data/com.tencent.lolm/files/
+ *     └─ su → cp libdobbyproject.so → /data/data/com.tencent.lolm/files/
  *     └─ chmod 777  (拷贝 SO 到目标应用目录)
  *
  *  4. launchAndInject()  [子线程]
@@ -53,6 +53,8 @@ import java.io.InputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.io.File;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipEntry;
 public class MainActivity extends AppCompatActivity {
 
     // --- 1. LogUtil 保持不变 ---
@@ -374,6 +376,154 @@ public class MainActivity extends AppCompatActivity {
     public native String stringFromJNI();
     public native int injectSoToTarget(String packageName, String soPath);
 
+    /**
+     * 获取真实内核架构 (uname -m), 不受 ARM 翻译层影响
+     */
+    private String getKernelArch() {
+        try {
+            Process p = Runtime.getRuntime().exec("uname -m");
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line = reader.readLine();
+            p.waitFor();
+            if (line != null) {
+                String arch = line.trim();
+                LogUtil.i("[架构] 内核架构 (uname -m): " + arch);
+                return arch;
+            }
+        } catch (Exception ignored) {}
+        return "unknown";
+    }
+
+    /**
+     * 将内核架构名映射为 Android ABI 名
+     */
+    private String kernelArchToAbi(String kernelArch, boolean is32bit) {
+        if (kernelArch.contains("x86_64") || kernelArch.contains("amd64")) {
+            return is32bit ? "x86" : "x86_64";
+        }
+        if (kernelArch.contains("x86") || kernelArch.contains("i686") || kernelArch.contains("i386")) {
+            return "x86";
+        }
+        if (kernelArch.contains("aarch64") || kernelArch.contains("armv8")) {
+            return is32bit ? "armeabi-v7a" : "arm64-v8a";
+        }
+        if (kernelArch.contains("arm")) {
+            return "armeabi-v7a";
+        }
+        return "unknown";
+    }
+
+    /**
+     * 检测目标进程的实际运行架构 (从 /proc/pid/maps 中加载的 libc 路径判断)
+     * lib/ = 32-bit, lib64/ = 64-bit
+     */
+    private boolean isTargetProcess32Bit(String packageName) {
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("cat /proc/$(pidof " + packageName + ")/maps | grep libc.so | head -1\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                LogUtil.i("[架构] 目标 libc 映射: " + line);
+                if (line.contains("/lib64/")) {
+                    p.waitFor();
+                    return false; // 64-bit
+                }
+                if (line.contains("/lib/")) {
+                    p.waitFor();
+                    return true;  // 32-bit
+                }
+            }
+            p.waitFor();
+        } catch (Exception ignored) {}
+        // 回退: 检查地址范围
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("head -3 /proc/$(pidof " + packageName + ")/maps\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String addr = line.split("-")[0].trim();
+                if (addr.length() > 8) {
+                    p.waitFor();
+                    return false; // 64-bit address
+                }
+            }
+            p.waitFor();
+            return true;
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    /**
+     * 从 APK 中提取指定架构的 native 库到指定路径
+     */
+    private boolean extractLibFromApk(String abi, String libName, String destPath) {
+        String apkPath = getApplicationInfo().sourceDir;
+        String entryName = "lib/" + abi + "/" + libName;
+        LogUtil.i("[提取] 从 APK 提取: " + entryName);
+        try {
+            ZipFile zip = new ZipFile(apkPath);
+            ZipEntry entry = zip.getEntry(entryName);
+            if (entry == null) {
+                LogUtil.e("[提取] APK 中不存在: " + entryName, null);
+                zip.close();
+                return false;
+            }
+            String tmpPath = getCacheDir() + "/" + abi + "_" + libName;
+            InputStream is = zip.getInputStream(entry);
+            FileOutputStream fos = new FileOutputStream(tmpPath);
+            byte[] buf = new byte[8192];
+            int len;
+            while ((len = is.read(buf)) > 0) {
+                fos.write(buf, 0, len);
+            }
+            fos.close();
+            is.close();
+            zip.close();
+
+            // 用 su 部署到目标路径
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("cp -f " + tmpPath + " " + destPath + "\n");
+            os.writeBytes("chmod 755 " + destPath + "\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            p.waitFor();
+            LogUtil.i("[提取] ✓ 已部署: " + destPath);
+            return true;
+        } catch (Exception e) {
+            LogUtil.e("[提取] 失败: " + e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * 检测目标进程是否正在运行
+     */
+    private boolean isProcessRunning(String packageName) {
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("pidof " + packageName + " && echo RUNNING\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.contains("RUNNING")) { p.waitFor(); return true; }
+            }
+            p.waitFor();
+        } catch (Exception ignored) {}
+        return false;
+    }
+
     public void setSelinuxPermissive() {
         try {
             Process p = Runtime.getRuntime().exec("su");
@@ -453,32 +603,128 @@ public class MainActivity extends AppCompatActivity {
 
             // 启动目标应用
             LogUtil.i("[注入流程] 正在启动目标应用: " + g_packFileName);
-            try {
-                Process p = Runtime.getRuntime().exec("su");
-                DataOutputStream os = new DataOutputStream(p.getOutputStream());
-                os.writeBytes("am start -n " + g_packFileName + "/com.riotgames.league.RiotNativeActivity\n");
-                os.writeBytes("exit\n");
-                os.flush();
-                int exitCode = p.waitFor();
-                if (exitCode == 0) {
-                    LogUtil.i("[注入流程] 目标应用启动成功");
-                } else {
-                    LogUtil.i("[注入流程] am start 失败, 尝试 monkey 启动...");
-                    Process p2 = Runtime.getRuntime().exec("su");
-                    DataOutputStream os2 = new DataOutputStream(p2.getOutputStream());
-                    os2.writeBytes("monkey -p " + g_packFileName + " -c android.intent.category.LAUNCHER 1\n");
-                    os2.writeBytes("exit\n");
-                    os2.flush();
-                    p2.waitFor();
-                    LogUtil.i("[注入流程] monkey 启动完成");
+            boolean appLaunched = false;
+
+            // 方式1: monkey 启动 (最通用, 无需知道 Activity 名称)
+            if (!appLaunched) {
+                try {
+                    LogUtil.i("[注入流程] 尝试 monkey 启动...");
+                    Process p = Runtime.getRuntime().exec("su");
+                    DataOutputStream os = new DataOutputStream(p.getOutputStream());
+                    os.writeBytes("monkey -p " + g_packFileName + " -c android.intent.category.LAUNCHER 1 2>/dev/null\n");
+                    os.writeBytes("exit $?\n");
+                    os.flush();
+                    BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                    String l;
+                    while ((l = br.readLine()) != null) {
+                        LogUtil.i("[注入流程] monkey: " + l);
+                    }
+                    p.waitFor();
+                    // 验证进程是否启动
+                    Thread.sleep(2000);
+                    if (isProcessRunning(g_packFileName)) {
+                        appLaunched = true;
+                        LogUtil.i("[注入流程] ✓ monkey 启动成功");
+                    } else {
+                        LogUtil.i("[注入流程] monkey 后进程未出现, 尝试其他方式...");
+                    }
+                } catch (Exception e) {
+                    LogUtil.e("[注入流程] monkey 启动异常: " + e.getMessage(), e);
                 }
-            } catch (Exception e) {
-                LogUtil.e("[注入流程] 启动目标应用异常: " + e.getMessage(), e);
+            }
+
+            // 方式2: am start 指定 Activity (适用于已知 Activity 的场景)
+            if (!appLaunched) {
+                try {
+                    LogUtil.i("[注入流程] 尝试 am start 启动...");
+                    Process p = Runtime.getRuntime().exec("su");
+                    DataOutputStream os = new DataOutputStream(p.getOutputStream());
+                    os.writeBytes("am start -n " + g_packFileName + "/com.riotgames.league.RiotNativeActivity 2>&1\n");
+                    os.writeBytes("exit $?\n");
+                    os.flush();
+                    BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                    String l;
+                    boolean hasError = false;
+                    while ((l = br.readLine()) != null) {
+                        LogUtil.i("[注入流程] am start: " + l);
+                        if (l.contains("Error") || l.contains("error")) hasError = true;
+                    }
+                    p.waitFor();
+                    if (!hasError) {
+                        Thread.sleep(2000);
+                        if (isProcessRunning(g_packFileName)) {
+                            appLaunched = true;
+                            LogUtil.i("[注入流程] ✓ am start 启动成功");
+                        }
+                    }
+                } catch (Exception e) {
+                    LogUtil.e("[注入流程] am start 异常: " + e.getMessage(), e);
+                }
+            }
+
+            // 方式3: am start 不指定 Activity, 用 launcher intent
+            if (!appLaunched) {
+                try {
+                    LogUtil.i("[注入流程] 尝试 am start launcher intent...");
+                    Process p = Runtime.getRuntime().exec("su");
+                    DataOutputStream os = new DataOutputStream(p.getOutputStream());
+                    os.writeBytes("am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $(cmd package resolve-activity --brief " + g_packFileName + " 2>/dev/null | tail -1) 2>&1 || am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p " + g_packFileName + " 2>&1\n");
+                    os.writeBytes("exit\n");
+                    os.flush();
+                    BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                    String l;
+                    while ((l = br.readLine()) != null) {
+                        LogUtil.i("[注入流程] launch: " + l);
+                    }
+                    p.waitFor();
+                    Thread.sleep(2000);
+                    if (isProcessRunning(g_packFileName)) {
+                        appLaunched = true;
+                        LogUtil.i("[注入流程] ✓ launcher intent 启动成功");
+                    }
+                } catch (Exception e) {
+                    LogUtil.e("[注入流程] launcher intent 异常: " + e.getMessage(), e);
+                }
+            }
+
+            if (!appLaunched) {
+                LogUtil.e("[注入流程] ✗ 所有启动方式均失败!", null);
             }
 
             // 等待 15 秒让目标进程完成初始化
             LogUtil.i("[注入流程] 等待 15 秒让目标进程初始化...");
             try { Thread.sleep(15000); } catch (InterruptedException ignored) {}
+
+            // ── 检测目标进程架构, 部署匹配的 SO 和 injector ──
+            // 用内核架构(uname -m)而非 nativeLibPath 来判断, 避免 ARM 翻译层误导
+            String kernelArch = getKernelArch();
+            boolean targetIs32 = false;
+            try {
+                targetIs32 = isTargetProcess32Bit(g_packFileName);
+            } catch (Exception e) {
+                LogUtil.e("[注入流程] 检测目标架构异常: " + e.getMessage(), e);
+            }
+            String targetAbi = kernelArchToAbi(kernelArch, targetIs32);
+            // injector 必须匹配目标进程架构 (ptrace 要求同架构)
+            String injectorAbi = targetAbi;
+            LogUtil.i("[注入流程] 内核=" + kernelArch + ", 目标32位=" + targetIs32 + ", 目标ABI=" + targetAbi);
+
+            // 判断当前已部署的 injector/SO 架构是否匹配
+            // nativeLibPath 反映的是 App 自身使用的 ABI
+            String appAbi = "unknown";
+            if (g_nativeLibPath.contains("x86_64")) appAbi = "x86_64";
+            else if (g_nativeLibPath.contains("x86")) appAbi = "x86";
+            else if (g_nativeLibPath.contains("arm64")) appAbi = "arm64-v8a";
+            else if (g_nativeLibPath.contains("armeabi")) appAbi = "armeabi-v7a";
+            LogUtil.i("[注入流程] App ABI=" + appAbi + ", 需要ABI=" + targetAbi);
+
+            if (!targetAbi.equals(appAbi) && !targetAbi.equals("unknown")) {
+                LogUtil.i("[注入流程] 架构不匹配, 从 APK 提取 " + targetAbi + " 版本...");
+                // 提取并部署匹配架构的 injector
+                extractLibFromApk(targetAbi, "libinjector.so", injectorDst);
+                // 提取并部署匹配架构的 libdobbyproject.so
+                extractLibFromApk(targetAbi, "libdobbyproject.so", soPath);
+            }
 
             // 通过 su 执行 injector (root 权限, 可以 ptrace)
             LogUtil.i("[注入流程] 以 root 身份执行 injector...");
@@ -600,43 +846,43 @@ public class MainActivity extends AppCompatActivity {
         String dstDir = "/data/data/" + g_packFileName + "/files";
         String dstFile = dstDir + "/libdobbyproject.so";
 
-        LogUtil.i(srcFile.toString());
+        LogUtil.i("源文件: " + srcFile);
+        LogUtil.i("拷贝 SO -> " + dstFile);
 
-        LogUtil.i("KSU 尝试全局拷贝 -> " + dstFile);
+        // 构建拷贝命令
+        String cmd = "mkdir -p " + dstDir + "\n" +
+                "cp -f " + srcFile + " " + dstFile + "\n" +
+                "chmod 777 " + dstFile + "\n" +
+                "sync\n" +
+                "exit\n";
 
-        try {
-            // 1. 修改为 -M 参数 (Mount Master)
-            Process p = Runtime.getRuntime().exec("su -M");
-            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+        // 依次尝试: su -M (KernelSU) → su -mm (Magisk) → su (通用)
+        String[] suVariants = {"su -M", "su -mm", "su"};
+        for (String suCmd : suVariants) {
+            try {
+                LogUtil.i("尝试 " + suCmd + " 执行拷贝...");
+                Process p = Runtime.getRuntime().exec(suCmd);
+                DataOutputStream os = new DataOutputStream(p.getOutputStream());
+                os.writeBytes(cmd);
+                os.flush();
 
-            // 2. 写入指令
-            String cmd = "mkdir -p " + dstDir + "\n" +
-                    "cp -f " + srcFile + " " + dstFile + "\n" +
-                    "chmod 777 " + dstFile + "\n" +
-                    "sync\n" +
-                    "exit\n";
+                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    LogUtil.i("Output: " + line);
+                }
 
-            LogUtil.i(cmd.toString());
-
-            os.writeBytes(cmd);
-            os.flush();
-
-            // 3. 读取输出以确认 ls 状态
-            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                LogUtil.i("KSU Output: " + line);
+                int exitCode = p.waitFor();
+                if (exitCode == 0) {
+                    LogUtil.i("✓ 使用 " + suCmd + " 拷贝成功");
+                    return;
+                } else {
+                    LogUtil.i(suCmd + " 失败 (exitCode=" + exitCode + "), 尝试下一个...");
+                }
+            } catch (Exception e) {
+                LogUtil.i(suCmd + " 不可用: " + e.getMessage() + ", 尝试下一个...");
             }
-
-            int exitCode = p.waitFor();
-            if (exitCode == 0) {
-                LogUtil.i("命令执行完成！请再次在 Shell 确认。");
-            } else {
-                LogUtil.e("执行失败，错误码: " + exitCode + "。检查参数是否正确。", null);
-            }
-
-        } catch (Exception e) {
-            LogUtil.e("KSU 异常: " + e.getMessage(), e);
         }
+        LogUtil.e("所有 su 方式均失败，无法拷贝 SO 文件", null);
     }
 }

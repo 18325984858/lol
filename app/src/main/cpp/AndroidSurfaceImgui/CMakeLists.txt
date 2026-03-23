@@ -47,6 +47,8 @@ file(GLOB ZSTD_SOURCES
 )
 add_library(zstd_static STATIC ${ZSTD_SOURCES})
 target_include_directories(zstd_static PUBLIC third_party/zstd/lib)
+# 禁用 zstd 的 ASM 快速解码器, 避免 x86/x86_64 上缺少汇编符号的链接错误
+target_compile_definitions(zstd_static PRIVATE ZSTD_DISABLE_ASM)
 set_target_properties(zstd_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Build AImGui library

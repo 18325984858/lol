@@ -65,33 +65,82 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
-#include <asm/ptrace.h>   // struct user_pt_regs (ARM64)
 #include <sys/uio.h>     // struct iovec
 
+#if defined(__aarch64__)
+#include <asm/ptrace.h>   // struct user_pt_regs (ARM64)
+#elif defined(__arm__)
+#include <asm/ptrace.h>   // struct pt_regs (ARM32)
+#elif defined(__x86_64__) || defined(__i386__)
+#include <sys/user.h>     // struct user_regs_struct (x86/x86_64)
+#endif
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// ARM64 ptrace 寄存器操作封装
+// 多架构 ptrace 寄存器操作封装
 // ═══════════════════════════════════════════════════════════════════════════════
 
-struct pt_regs_arm64 {
+#if defined(__aarch64__)
+
+struct pt_regs_arch {
     uint64_t regs[31];  // X0-X30
     uint64_t sp;
     uint64_t pc;
     uint64_t pstate;
 };
 
-static int ptrace_getregs(pid_t pid, pt_regs_arm64* regs) {
+static int ptrace_getregs(pid_t pid, pt_regs_arch* regs) {
     struct iovec iov;
     iov.iov_base = regs;
     iov.iov_len = sizeof(*regs);
     return ptrace(PTRACE_GETREGSET, pid, (void*)1 /*NT_PRSTATUS*/, &iov);
 }
 
-static int ptrace_setregs(pid_t pid, const pt_regs_arm64* regs) {
+static int ptrace_setregs(pid_t pid, const pt_regs_arch* regs) {
     struct iovec iov;
     iov.iov_base = (void*)regs;
     iov.iov_len = sizeof(*regs);
     return ptrace(PTRACE_SETREGSET, pid, (void*)1 /*NT_PRSTATUS*/, &iov);
 }
+
+#elif defined(__arm__)
+
+typedef struct pt_regs pt_regs_arch;
+
+static int ptrace_getregs(pid_t pid, pt_regs_arch* regs) {
+    return ptrace(PTRACE_GETREGS, pid, nullptr, regs);
+}
+
+static int ptrace_setregs(pid_t pid, const pt_regs_arch* regs) {
+    return ptrace(PTRACE_SETREGS, pid, nullptr, regs);
+}
+
+#elif defined(__x86_64__)
+
+typedef struct user_regs_struct pt_regs_arch;
+
+static int ptrace_getregs(pid_t pid, pt_regs_arch* regs) {
+    return ptrace(PTRACE_GETREGS, pid, nullptr, regs);
+}
+
+static int ptrace_setregs(pid_t pid, const pt_regs_arch* regs) {
+    return ptrace(PTRACE_SETREGS, pid, nullptr, regs);
+}
+
+#elif defined(__i386__)
+
+typedef struct user_regs_struct pt_regs_arch;
+
+static int ptrace_getregs(pid_t pid, pt_regs_arch* regs) {
+    return ptrace(PTRACE_GETREGS, pid, nullptr, regs);
+}
+
+static int ptrace_setregs(pid_t pid, const pt_regs_arch* regs) {
+    return ptrace(PTRACE_SETREGS, pid, nullptr, regs);
+}
+
+#else
+#error "Unsupported architecture for Injector"
+#endif
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 远程内存读写
@@ -192,22 +241,62 @@ static uint64_t getRemoteFuncAddr(pid_t pid, const char* moduleName, void* local
 // ═══════════════════════════════════════════════════════════════════════════════
 
 static int ptrace_call(pid_t pid, uint64_t funcAddr, uint64_t* params, int paramCount, uint64_t* retVal) {
-    pt_regs_arm64 regs;
+    pt_regs_arch regs;
     if (ptrace_getregs(pid, &regs) < 0) {
         LOG(LOG_LEVEL_ERROR, "[Injector] GETREGS failed: %s", strerror(errno));
         return -1;
     }
 
+#if defined(__aarch64__)
     // ARM64: 前8个参数通过 X0-X7 传递
     for (int i = 0; i < paramCount && i < 8; i++) {
         regs.regs[i] = params[i];
     }
-
-    // 设置 PC 为目标函数地址
     regs.pc = funcAddr;
-
-    // 设置 LR (X30) 为 0, 函数返回时触发 SIGSEGV, 我们通过 waitpid 捕获
+    // 设置 LR (X30) 为 0, 函数返回时触发 SIGSEGV
     regs.regs[30] = 0;
+
+#elif defined(__arm__)
+    // ARM32 AAPCS: R0-R3 传递前 4 个参数, 多余的压栈
+    for (int i = 0; i < paramCount && i < 4; i++) {
+        regs.uregs[i] = (unsigned long)params[i];
+    }
+    if (paramCount > 4) {
+        regs.ARM_sp -= (paramCount - 4) * 4;
+        for (int i = 4; i < paramCount; i++) {
+            uint32_t val32 = (uint32_t)params[i];
+            ptrace(PTRACE_POKEDATA, pid, (void*)(unsigned long)(regs.ARM_sp + (i - 4) * 4), (void*)(unsigned long)val32);
+        }
+    }
+    regs.ARM_pc = (unsigned long)funcAddr;
+    // 设置 LR 为 0, 函数返回时触发 SIGSEGV
+    regs.ARM_lr = 0;
+
+#elif defined(__x86_64__)
+    // x86_64 System V ABI: RDI, RSI, RDX, RCX, R8, R9
+    if (paramCount > 0) regs.rdi = params[0];
+    if (paramCount > 1) regs.rsi = params[1];
+    if (paramCount > 2) regs.rdx = params[2];
+    if (paramCount > 3) regs.rcx = params[3];
+    if (paramCount > 4) regs.r8  = params[4];
+    if (paramCount > 5) regs.r9  = params[5];
+    // 在栈上压入返回地址 0, ret 时触发 SIGSEGV
+    regs.rsp -= 8;
+    ptrace(PTRACE_POKEDATA, pid, (void*)regs.rsp, (void*)0);
+    regs.rip = funcAddr;
+
+#elif defined(__i386__)
+    // x86 cdecl: 所有参数从右往左压栈
+    for (int i = paramCount - 1; i >= 0; i--) {
+        regs.esp -= 4;
+        uint32_t val32 = (uint32_t)params[i];
+        ptrace(PTRACE_POKEDATA, pid, (void*)(unsigned long)regs.esp, (void*)(unsigned long)val32);
+    }
+    // 压入返回地址 0
+    regs.esp -= 4;
+    ptrace(PTRACE_POKEDATA, pid, (void*)(unsigned long)regs.esp, (void*)0);
+    regs.eip = (uint32_t)funcAddr;
+#endif
 
     if (ptrace_setregs(pid, &regs) < 0) {
         LOG(LOG_LEVEL_ERROR, "[Injector] SETREGS failed: %s", strerror(errno));
@@ -220,17 +309,24 @@ static int ptrace_call(pid_t pid, uint64_t funcAddr, uint64_t* params, int param
         return -1;
     }
 
-    // 等待目标进程停止 (函数返回时 LR=0 触发 SIGSEGV)
+    // 等待目标进程停止 (返回地址 0 触发 SIGSEGV)
     int status = 0;
     waitpid(pid, &status, WUNTRACED);
 
     if (WIFSTOPPED(status)) {
-        // 读取返回值 (X0)
         if (ptrace_getregs(pid, &regs) < 0) {
             LOG(LOG_LEVEL_ERROR, "[Injector] GETREGS after call failed: %s", strerror(errno));
             return -1;
         }
-        if (retVal) *retVal = regs.regs[0];
+#if defined(__aarch64__)
+        if (retVal) *retVal = regs.regs[0];  // X0 = 返回值
+#elif defined(__arm__)
+        if (retVal) *retVal = regs.ARM_r0;   // R0 = 返回值
+#elif defined(__x86_64__)
+        if (retVal) *retVal = regs.rax;      // RAX = 返回值
+#elif defined(__i386__)
+        if (retVal) *retVal = regs.eax;      // EAX = 返回值
+#endif
     } else {
         LOG(LOG_LEVEL_ERROR, "[Injector] 目标进程异常退出, status=%d", status);
         return -1;
@@ -257,7 +353,7 @@ int Injector::injectRemote(pid_t pid, const char* soPath) {
     LOG(LOG_LEVEL_INFO, "[Injector] 已附加到进程 %d", pid);
 
     // ── 2. 保存原始寄存器 ──
-    pt_regs_arm64 origRegs;
+    pt_regs_arch origRegs;
     if (ptrace_getregs(pid, &origRegs) < 0) {
         LOG(LOG_LEVEL_ERROR, "[Injector] 保存寄存器失败: %s", strerror(errno));
         ptrace(PTRACE_DETACH, pid, nullptr, nullptr);
@@ -430,26 +526,54 @@ detach:
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pid_t Injector::findPidByName(const char* packageName) {
-    // 使用 su + pidof 命令查找, 普通 App 进程无权读取其他进程的 /proc/[pid]/cmdline
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "su -c 'pidof %s'", packageName);
+    // 方式1: 直接扫描 /proc (注入器已以 root 身份运行, 无需 su)
+    DIR* dir = opendir("/proc");
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            // 只检查数字目录 (PID)
+            if (entry->d_type != DT_DIR) continue;
+            bool isDigit = true;
+            for (const char* c = entry->d_name; *c; c++) {
+                if (*c < '0' || *c > '9') { isDigit = false; break; }
+            }
+            if (!isDigit) continue;
 
-    FILE* fp = popen(cmd, "r");
-    if (!fp) {
-        LOG(LOG_LEVEL_ERROR, "[Injector] popen 失败: %s", strerror(errno));
-        return -1;
+            char cmdlinePath[256];
+            snprintf(cmdlinePath, sizeof(cmdlinePath), "/proc/%s/cmdline", entry->d_name);
+            FILE* fp = fopen(cmdlinePath, "r");
+            if (!fp) continue;
+
+            char cmdline[256] = {0};
+            fgets(cmdline, sizeof(cmdline), fp);
+            fclose(fp);
+
+            if (strcmp(cmdline, packageName) == 0) {
+                pid_t pid = atoi(entry->d_name);
+                closedir(dir);
+                LOG(LOG_LEVEL_INFO, "[Injector] 找到目标进程: %s -> pid=%d (/proc 扫描)", packageName, pid);
+                return pid;
+            }
+        }
+        closedir(dir);
     }
 
-    char buf[64] = {0};
-    if (fgets(buf, sizeof(buf), fp)) {
-        pclose(fp);
-        pid_t pid = atoi(buf);
-        if (pid > 0) {
-            LOG(LOG_LEVEL_INFO, "[Injector] 找到目标进程: %s -> pid=%d", packageName, pid);
-            return pid;
+    // 方式2: 回退到 pidof (无需 su, 注入器已是 root)
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "pidof %s", packageName);
+    FILE* fp = popen(cmd, "r");
+    if (fp) {
+        char buf[64] = {0};
+        if (fgets(buf, sizeof(buf), fp)) {
+            pclose(fp);
+            pid_t pid = atoi(buf);
+            if (pid > 0) {
+                LOG(LOG_LEVEL_INFO, "[Injector] 找到目标进程: %s -> pid=%d (pidof)", packageName, pid);
+                return pid;
+            }
+        } else {
+            pclose(fp);
         }
-    } else {
-        pclose(fp);
     }
 
     LOG(LOG_LEVEL_ERROR, "[Injector] 未找到进程: %s", packageName);

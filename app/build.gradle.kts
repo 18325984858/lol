@@ -16,10 +16,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // 建议明确指定 ABI，确保只生成你需要的架构（比如 arm64）
+        // 支持 ARM + x86 模拟器架构
         externalNativeBuild {
             cmake {
-                abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
+                abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64"))
             }
         }
     }
