@@ -27,6 +27,7 @@ namespace draw {
         bool m_enableWards   = false;
         bool m_enableSkillRange = false;
         bool m_enableMinion  = false;
+        float m_lastHitHpThreshold = 120.0f;
         int  m_radarRotation = 0;
 
         // 小地图坐标映射

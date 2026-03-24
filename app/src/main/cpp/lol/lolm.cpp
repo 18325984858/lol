@@ -748,6 +748,35 @@ bool lol::FEVisi::worldToScreen(const UnityVector3& worldPos, float& outScreenX,
     return true;
 }
 
+bool lol::FEVisi::buildProjectedRangeRing(const UnityVector3& centerWorld, float range,
+                                         std::vector<ScreenPoint>& outPoints) {
+    outPoints.clear();
+    if (range <= 0.0f) return false;
+
+    constexpr int kSegments = 40;
+    outPoints.reserve(kSegments);
+
+    for (int i = 0; i < kSegments; ++i) {
+        const float theta = (2.0f * 3.1415926535f * (float)i) / (float)kSegments;
+        UnityVector3 edgeWorld{
+            centerWorld.x + std::cos(theta) * range,
+            centerWorld.y,
+            centerWorld.z + std::sin(theta) * range,
+        };
+
+        float screenX = 0.0f;
+        float screenY = 0.0f;
+        if (!worldToScreen(edgeWorld, screenX, screenY)) {
+            outPoints.clear();
+            return false;
+        }
+
+        outPoints.push_back({screenX, screenY});
+    }
+
+    return outPoints.size() >= 8;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // updateMiniMapData() — 小地图主循环（遍历所有图标，收集敌方英雄HP和眼位坐标）
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -946,7 +975,11 @@ void *lol::FEVisi::updateMiniMapData() {
                     m_miniMapData.myScreenY     = info.screenY;
                     m_miniMapData.hasMyScreenPos = true;
                 }
-                if (info.atkRange > 0.0f) m_miniMapData.mySkillRange = info.atkRange;
+                if (info.atkRange > 0.0f) {
+                    m_miniMapData.mySkillRange = info.atkRange;
+                    buildProjectedRangeRing(worldPos, info.atkRange,
+                                            m_miniMapData.mySkillRangeScreenPoints);
+                }
             }
 
             // (高频采集: 日志由 printMiniMapData 定期输出, 此处不逐帧打印)

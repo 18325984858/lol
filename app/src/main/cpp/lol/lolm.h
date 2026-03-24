@@ -31,6 +31,12 @@ namespace lol {
         float z;
     };
 
+    /** @brief 屏幕坐标点（Unity 屏幕空间，原点左下） */
+    struct ScreenPoint {
+        float x;
+        float y;
+    };
+
     /** @brief 敌方英雄信息 */
     struct MiniMapEnemyHeroInfo {
         int32_t     iconType;       ///< 图标类型 (MiniMapIconType)
@@ -82,6 +88,7 @@ namespace lol {
         float       myScreenX;       ///< 己方屏幕 X
         float       myScreenY;       ///< 己方屏幕 Y
         bool        hasMyScreenPos;  ///< 己方屏幕坐标是否有效
+        std::vector<ScreenPoint> mySkillRangeScreenPoints; ///< 己方攻击范围投影轮廓
 
         void clear() {
             enemyHeroes.clear();
@@ -91,6 +98,7 @@ namespace lol {
             myWorldPos = {0,0,0};
             myScreenX = 0; myScreenY = 0;
             hasMyScreenPos = false;
+            mySkillRangeScreenPoints.clear();
         }
     };
 
@@ -235,6 +243,10 @@ namespace lol {
         /** @brief 根据小地图图标信息追加一条小兵数据，成功追加返回 true */
         bool appendMinionData(int32_t iconType, void* actor,
                       const UnityVector3& worldPos, bool hasWorldPos);
+
+        /** @brief 基于 WorldToScreenPoint 生成己方攻击范围的屏幕投影轮廓 */
+        bool buildProjectedRangeRing(const UnityVector3& centerWorld, float range,
+                         std::vector<ScreenPoint>& outPoints);
 
 
         /**

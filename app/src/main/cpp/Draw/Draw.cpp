@@ -119,6 +119,9 @@ void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
         ImGui::Checkbox("SkillRng",  &m_enableSkillRange);
         ImGui::SameLine();
         ImGui::Checkbox("Minion",    &m_enableMinion);
+        if (m_enableMinion) {
+            ImGui::SliderFloat("LastHit HP", &m_lastHitHpThreshold, 10.0f, 300.0f, "%.0f");
+        }
         ImGui::Separator();
 
         // ── 敌方英雄信息 ──
@@ -508,43 +511,28 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
 void GameOverlay::drawSkillRange(const lol::MiniMapData& data) {
     ImGuiIO& io = ImGui::GetIO();
     const float screenH = io.DisplaySize.y;
-    const float screenW = io.DisplaySize.x;
     auto* dl = ImGui::GetForegroundDrawList();
 
-    // atkRange 值是游戏内部距离单位，需要转换为屏幕像素
-    // 通过经验值: 游戏距离 1.0 ≈ 屏幕约 15-25 像素 (取决于相机缩放)
-    // atkRange 的典型值: 普攻约 2-8 (游戏距离单位)
-    // 如果值 > 100 说明是万分比格式，需要先 /10000
-    float pixelsPerUnit = 60.0f;
-
-    for (size_t i = 0; i < data.enemyHeroes.size(); ++i) {
-        const auto& hero = data.enemyHeroes[i];
-        if (hero.atkRange <= 0.0f || !hero.hasScreenPos) continue;
-
-        float cx = hero.screenX;
-        float cy = screenH - hero.screenY;
-
-        if (cx < -200 || cx > screenW + 200 || cy < -200 || cy > screenH + 200) continue;
-
-        // _maxRange 经 DecoderFix64 后是游戏距离单位 (典型值 2-10)
-        float range = hero.atkRange;
-
-        float radiusPx = range * pixelsPerUnit;
-        if (radiusPx < 10.0f)  radiusPx = 10.0f;
-        if (radiusPx > 400.0f) radiusPx = 400.0f;
-
-        bool isMyTeam = (hero.iconType == 2);
-        ImU32 circleColor = isMyTeam ? IM_COL32(0, 255, 100, 80)  : IM_COL32(255, 60, 60, 80);
-        ImU32 fillColor   = isMyTeam ? IM_COL32(0, 255, 100, 12)  : IM_COL32(255, 60, 60, 12);
-        ImU32 textColor   = isMyTeam ? IM_COL32(0, 255, 100, 200) : IM_COL32(255, 100, 100, 200);
-
-        dl->AddCircle(ImVec2(cx, cy), radiusPx, circleColor, 48, 1.5f);
-        dl->AddCircleFilled(ImVec2(cx, cy), radiusPx, fillColor, 48);
-
-        char label[32];
-        snprintf(label, sizeof(label), "%.1f", hero.atkRange);
-        dl->AddText(ImVec2(cx + radiusPx + 3, cy - 6), textColor, label);
+    if (data.mySkillRange <= 0.0f || !data.hasMyScreenPos || data.mySkillRangeScreenPoints.size() < 8) {
+        return;
     }
+
+    std::vector<ImVec2> projectedPoints;
+    projectedPoints.reserve(data.mySkillRangeScreenPoints.size());
+    for (const auto& point : data.mySkillRangeScreenPoints) {
+        projectedPoints.emplace_back(point.x, screenH - point.y);
+    }
+
+    const ImU32 circleColor = IM_COL32(0, 255, 100, 90);
+    const ImU32 fillColor   = IM_COL32(0, 255, 100, 18);
+    const ImU32 textColor   = IM_COL32(0, 255, 100, 220);
+
+    dl->AddConvexPolyFilled(projectedPoints.data(), (int)projectedPoints.size(), fillColor);
+    dl->AddPolyline(projectedPoints.data(), (int)projectedPoints.size(), circleColor, ImDrawFlags_Closed, 1.8f);
+
+    char label[32];
+    snprintf(label, sizeof(label), "%.1f", data.mySkillRange);
+    dl->AddText(ImVec2(data.myScreenX + 10.0f, screenH - data.myScreenY - 18.0f), textColor, label);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -557,6 +545,8 @@ void GameOverlay::drawMinionESP(const lol::MiniMapData& data) {
     ImGuiIO& io = ImGui::GetIO();
     const float screenW = io.DisplaySize.x;
     const float screenH = io.DisplaySize.y;
+    const bool hasSelfRange = data.mySkillRange > 0.0f;
+    const float attackRangeSq = data.mySkillRange * data.mySkillRange;
 
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(screenW, screenH));
@@ -577,6 +567,15 @@ void GameOverlay::drawMinionESP(const lol::MiniMapData& data) {
         float sx = m.screenX;
         float sy = screenH - m.screenY; // Unity Y 翻转
 
+        bool inAttackRange = false;
+        if (hasSelfRange && m.hasWorldPos) {
+            float dx = m.worldPos.x - data.myWorldPos.x;
+            float dz = m.worldPos.z - data.myWorldPos.z;
+            float distSq = dx * dx + dz * dz;
+            inAttackRange = distSq <= attackRangeSq;
+        }
+        bool isLastHittable = m.isEnemy && inAttackRange && m.curHp > 0.0f && m.curHp <= m_lastHitHpThreshold;
+
         constexpr float kMargin = 50.0f;
         if (sx < -kMargin || sx > screenW + kMargin ||
             sy < -kMargin || sy > screenH + kMargin)
@@ -593,10 +592,20 @@ void GameOverlay::drawMinionESP(const lol::MiniMapData& data) {
         hpRatio = std::clamp(hpRatio, 0.0f, 1.0f);
 
         ImU32 boxColor = m.isEnemy ? IM_COL32(255, 100, 100, 180) : IM_COL32(100, 255, 100, 180);
+        if (isLastHittable) {
+            boxColor = IM_COL32(255, 220, 0, 255);
+        }
 
         // 方框
         dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 30));
         dl->AddRect(boxMin, boxMax, boxColor, 0.0f, 0, 1.5f);
+        if (isLastHittable) {
+            dl->AddRect(ImVec2(boxMin.x - 2.0f, boxMin.y - 2.0f),
+                        ImVec2(boxMax.x + 2.0f, boxMax.y + 2.0f),
+                        IM_COL32(255, 255, 150, 220), 0.0f, 0, 2.0f);
+            dl->AddCircle(ImVec2(sx, sy - boxH * 0.2f), boxW * 0.7f,
+                          IM_COL32(255, 220, 0, 220), 24, 1.8f);
+        }
 
         // 血条 (方框上方)
         const float hpBarH = 3.0f;
@@ -608,9 +617,20 @@ void GameOverlay::drawMinionESP(const lol::MiniMapData& data) {
         ImU32 hpColor = (hpRatio > 0.5f)  ? IM_COL32(0, 255, 0, 200) :
                         (hpRatio > 0.25f) ? IM_COL32(255, 255, 0, 200) :
                                              IM_COL32(255, 0, 0, 200);
+        if (isLastHittable) {
+            hpColor = IM_COL32(255, 220, 0, 255);
+        }
 
         dl->AddRectFilled(hpBgMin, hpBgMax, IM_COL32(0, 0, 0, 140));
         dl->AddRectFilled(hpBgMin, hpFgMax, hpColor);
+
+        if (isLastHittable) {
+            const char* label = "LAST";
+            ImVec2 textSize = ImGui::CalcTextSize(label);
+            ImVec2 textPos(sx - textSize.x * 0.5f, boxMin.y - textSize.y - 6.0f);
+            dl->AddText(ImVec2(textPos.x + 1.0f, textPos.y + 1.0f), IM_COL32(0, 0, 0, 220), label);
+            dl->AddText(textPos, IM_COL32(255, 235, 80, 255), label);
+        }
     }
 
     ImGui::End();
