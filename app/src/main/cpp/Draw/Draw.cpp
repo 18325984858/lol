@@ -260,32 +260,34 @@ void GameOverlay::drawESP(const lol::MiniMapData& data) {
     }
 
     // ── 眼/守卫 ESP 方框 ──
-    for (const auto& ward : data.wards) {
-        if (!ward.hasScreenPos) continue;
+        if (m_enableWards) {
+            for (const auto& ward : data.wards) {
+                if (!ward.hasScreenPos) continue;
 
-        float sx = ward.screenX;
-        float sy = screenH - ward.screenY;
+                float sx = ward.screenX;
+                float sy = screenH - ward.screenY;
 
-        constexpr float kMargin = 100.0f;
-        if (sx < -kMargin || sx > screenW + kMargin ||
-            sy < -kMargin || sy > screenH + kMargin)
-            continue;
+                constexpr float kMargin = 100.0f;
+                if (sx < -kMargin || sx > screenW + kMargin ||
+                    sy < -kMargin || sy > screenH + kMargin)
+                    continue;
 
-        const float boxW = 30.0f;
-        const float boxH = 30.0f;
-        ImVec2 boxMin(sx - boxW * 0.5f, sy - boxH * 0.5f);
-        ImVec2 boxMax(sx + boxW * 0.5f, sy + boxH * 0.5f);
+                const float boxW = 30.0f;
+                const float boxH = 30.0f;
+                ImVec2 boxMin(sx - boxW * 0.5f, sy - boxH * 0.5f);
+                ImVec2 boxMax(sx + boxW * 0.5f, sy + boxH * 0.5f);
 
-        const ImU32 wardColor = IM_COL32(50, 150, 255, 220);
-        espDraw->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 40));
-        espDraw->AddRect(boxMin, boxMax, wardColor, 0.0f, 0, 2.0f);
+                const ImU32 wardColor = IM_COL32(50, 150, 255, 220);
+                espDraw->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 40));
+                espDraw->AddRect(boxMin, boxMax, wardColor, 0.0f, 0, 2.0f);
 
-        const char* label = "Ward";
-        ImVec2 textSize = ImGui::CalcTextSize(label);
-        float textX = sx - textSize.x * 0.5f;
-        float textY = boxMin.y - textSize.y - 1.0f;
-        espDraw->AddText(ImVec2(textX + 1, textY + 1), IM_COL32(0, 0, 0, 200), label);
-        espDraw->AddText(ImVec2(textX, textY), IM_COL32(100, 200, 255, 240), label);
+                const char* label = "Ward";
+                ImVec2 textSize = ImGui::CalcTextSize(label);
+                float textX = sx - textSize.x * 0.5f;
+                float textY = boxMin.y - textSize.y - 1.0f;
+                espDraw->AddText(ImVec2(textX + 1, textY + 1), IM_COL32(0, 0, 0, 200), label);
+                espDraw->AddText(ImVec2(textX, textY), IM_COL32(100, 200, 255, 240), label);
+            }
     }
 
     ImGui::End();
@@ -475,15 +477,17 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
     }
 
     // ── 眼位 (蓝色小菱形) ──
-    for (const auto& ward : data.wards) {
-        if (!ward.hasWorldPos) continue;
-        ImVec2 p = worldToMinimap(ward.worldPos, O, radarSize, m_radarRotation);
-        dl->AddCircleFilled(p, wardR, IM_COL32(50, 150, 255, 100));
-        dl->AddCircle(p, wardR, IM_COL32(100, 200, 255, 220), 0, 1.0f);
-        float s = wardR * 0.5f;
-        dl->AddQuadFilled(ImVec2(p.x, p.y - s), ImVec2(p.x + s, p.y),
-                          ImVec2(p.x, p.y + s), ImVec2(p.x - s, p.y),
-                          IM_COL32(120, 210, 255, 240));
+    if (m_enableWards) {
+        for (const auto& ward : data.wards) {
+            if (!ward.hasWorldPos) continue;
+            ImVec2 p = worldToMinimap(ward.worldPos, O, radarSize, m_radarRotation);
+            dl->AddCircleFilled(p, wardR, IM_COL32(50, 150, 255, 100));
+            dl->AddCircle(p, wardR, IM_COL32(100, 200, 255, 220), 0, 1.0f);
+            float s = wardR * 0.5f;
+            dl->AddQuadFilled(ImVec2(p.x, p.y - s), ImVec2(p.x + s, p.y),
+                              ImVec2(p.x, p.y + s), ImVec2(p.x - s, p.y),
+                              IM_COL32(120, 210, 255, 240));
+        }
     }
 
     dl->PopClipRect();
