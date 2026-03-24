@@ -65,6 +65,16 @@ public:
         return m_battleActive.load(std::memory_order_acquire);
     }
 
+    /** @brief UI 线程请求触发普攻 */
+    void requestNormalAttack() {
+        m_normalAttackRequested.store(true, std::memory_order_release);
+    }
+
+    /** @brief 数据线程消费普攻请求（返回 true 表示有请求待处理） */
+    bool consumeNormalAttackRequest() {
+        return m_normalAttackRequested.exchange(false, std::memory_order_acq_rel);
+    }
+
 private:
     SharedGameData() = default;
     ~SharedGameData() = default;
@@ -73,6 +83,7 @@ private:
     lol::MiniMapData m_data;
     std::atomic<bool> m_hasNewData{false};
     std::atomic<bool> m_battleActive{false};
+    std::atomic<bool> m_normalAttackRequested{false};
 };
 
 #endif // SHARED_GAME_DATA_H

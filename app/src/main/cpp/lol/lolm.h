@@ -284,6 +284,29 @@ namespace lol {
         void* getSkillUILogic(int skillID);
         std::vector<void*> getAllSkillUILogics();
 
+    public:
+        /**
+         * @brief  模拟普通攻击 —— 通过 PlayerControl.OnTriggerSkillButtonDown 发起普攻
+         * @return true=成功触发, false=失败（未找到英雄/技能/控制器等）
+         *
+         * @details 调用链:
+         *   1. FEVisi.get_playerControl() → PlayerControl
+         *   2. BattleActorVisi → BattleActor → ActorComponentSkillMgr
+         *   3. ActorComponentSkillMgr.GetNormalAttackSkill() → ActorSkill
+         *   4. PlayerControl.OnTriggerSkillButtonDown(valid, skillID, operID, ...)
+         *   5. PlayerControl.OnTriggerSkillButtonUp(...)  完成攻击释放
+         */
+        bool simulateNormalAttack();
+
+        /**
+         * @brief  每 tick 调用 —— 处理延迟的 ButtonUp（普攻第二阶段）
+         * @details 必须在数据采集循环中每 tick 调用此函数。
+         *          simulateNormalAttack() 仅发送 ButtonDown，
+         *          ButtonUp 会在下一个 tick 由此函数执行，
+         *          确保游戏 Update 有时间处理 Down 状态。
+         */
+        void tickPendingAttack();
+
     private:
 
         /**

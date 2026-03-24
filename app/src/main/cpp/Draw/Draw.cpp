@@ -1,4 +1,5 @@
 #include "Draw.h"
+#include "../SharedGameData.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -121,6 +122,11 @@ void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
         ImGui::Checkbox("Minion",    &m_enableMinion);
         if (m_enableMinion) {
             ImGui::SliderFloat("LastHit HP", &m_lastHitHpThreshold, 10.0f, 300.0f, "%.0f");
+        }
+
+        // ── 普攻模拟按钮 ──
+        if (ImGui::Button("Attack", ImVec2(70, 0))) {
+            SharedGameData::getInstance().requestNormalAttack();
         }
         ImGui::Separator();
 

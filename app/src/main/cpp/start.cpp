@@ -794,6 +794,14 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
                 bool isBattle = lol.get_BattleStarted();
                 SharedGameData::getInstance().setBattleActive(isBattle);
                 if (isBattle) {
+                    // ── 每 tick: 处理延迟的 ButtonUp（普攻第二阶段）──
+                    lol.tickPendingAttack();
+
+                    // ── 检查 UI 请求的普攻触发 ──
+                    if (SharedGameData::getInstance().consumeNormalAttackRequest()) {
+                        lol.simulateNormalAttack();
+                    }
+
                     lol.updateMiniMapData();
                     lol.updateMinionData();
                     SharedGameData::getInstance().pushData(lol.getMiniMapData());

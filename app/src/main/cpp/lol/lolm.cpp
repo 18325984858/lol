@@ -1586,3 +1586,287 @@ std::vector<void*> lol::FEVisi::getAllSkillUILogics() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// simulateNormalAttack — 模拟普通攻击 (Phase 1: ButtonDown)
+// tickPendingAttack   — 延迟执行 ButtonUp (Phase 2)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// 延迟 ButtonUp 的状态缓存
+static bool     s_pendingButtonUp      = false;
+static void*    s_pendingPlayerControl = nullptr;
+static int32_t  s_pendingSkillID       = 0;
+static int32_t  s_pendingOperID        = 0;
+
+// ─── tickPendingAttack: 由数据采集循环每 tick 调用, 处理延迟的 ButtonUp ───
+void lol::FEVisi::tickPendingAttack() {
+    if (!s_pendingButtonUp) return;
+    s_pendingButtonUp = false;
+
+    void* pPlayerControl = s_pendingPlayerControl;
+    if (!pPlayerControl || !IsReadableMemory(pPlayerControl, 0xD0)) {
+        LOG(LOG_LEVEL_WARN, "[NormalAttack] tickPendingAttack: PlayerControl 已失效");
+        return;
+    }
+
+    typedef void (*FnOnTriggerUp)(void*, float, float,
+                                  float, float, float,
+                                  bool, int32_t, int32_t,
+                                  int32_t, int32_t,
+                                  bool, bool, void*);
+    static FnOnTriggerUp s_onTriggerUp = nullptr;
+    if (!s_onTriggerUp && m_pfunctionInfo) {
+        s_onTriggerUp = (FnOnTriggerUp)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "PlayerControl", "",
+                "OnTriggerSkillButtonUp");
+        LOG(LOG_LEVEL_INFO, "[NormalAttack] resolved OnTriggerSkillButtonUp=%p",
+            (void*)s_onTriggerUp);
+    }
+    if (!s_onTriggerUp) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] OnTriggerSkillButtonUp 解析失败");
+        return;
+    }
+
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] >>> 延迟触发 ButtonUp (skillID=%d, operID=%d)",
+        s_pendingSkillID, s_pendingOperID);
+    s_onTriggerUp(pPlayerControl,
+                  0.0f,     // strength
+                  1.0f,     // moveSpeed
+                  0.0f, 0.0f, 1.0f,  // forward = {0, 0, 1}
+                  true,     // valid
+                  s_pendingSkillID,
+                  s_pendingOperID,
+                  0,        // autoRefreshType
+                  0,        // driveType
+                  false,    // isFixForward
+                  false,    // isForbid
+                  nullptr);
+
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] ✓ ButtonUp 完成");
+}
+// 调用链（从 IDA 反编译/dumpcs 分析得出）:
+//
+//   ┌─ 获取己方英雄的普攻技能 ─────────────────────────────────────────────────┐
+//   │  FEVisi.get_myHero()           → BattleActorVisi                        │
+//   │  BattleActorVisi.get_actor()   → BattleActor                           │
+//   │  BattleActor.get_skillMgr()    → ActorComponentSkillMgr                │
+//   │  ActorComponentSkillMgr.GetNormalAttackSkill() → ActorSkill             │
+//   │  ActorSkill.get_resId()        → int (技能ID)                          │
+//   └─────────────────────────────────────────────────────────────────────────┘
+//   ┌─ 获取 PlayerControl 并触发按钮按下/抬起 ────────────────────────────────┐
+//   │  FEVisi.get_playerControl()    → PlayerControl                         │
+//   │  PlayerControl.OnTriggerSkillButtonDown(                                │
+//   │      valid=true,                                                        │
+//   │      skillID,   ← 普攻技能 resId                                       │
+//   │      operID,    ← 技能操作 ID (skillOp.get_skillOpID)                  │
+//   │      autoRefreshType=0,  ← TargetAutoRefreshType.None                  │
+//   │      driveType=0,        ← ButtonStateBuffer.DRIVE_TYPE.Normal         │
+//   │      isReButtonDown=false,                                              │
+//   │      slotIndex=0         ← SkillSlotIndex_IndexEnum 普攻槽位           │
+//   │  )                                                                      │
+//   │  PlayerControl.OnTriggerSkillButtonUp(                                  │
+//   │      strength=0.0, moveSpeed=1.0, forward={0,0,1},                     │
+//   │      valid=true, skillID, operID,                                       │
+//   │      autoRefreshType=0, driveType=0,                                    │
+//   │      isFixForward=false, isForbid=false                                │
+//   │  )                                                                      │
+//   └─────────────────────────────────────────────────────────────────────────┘
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool lol::FEVisi::simulateNormalAttack() {
+    if (!m_pfunctionInfo) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] m_pfunctionInfo 为空");
+        return false;
+    }
+
+    // ─── 1. 获取 PlayerControl ───
+    typedef void* (*FnGetPlayerControl)(void*);
+    static FnGetPlayerControl s_getPlayerControl = nullptr;
+    if (!s_getPlayerControl) {
+        s_getPlayerControl = (FnGetPlayerControl)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FEVisi", "FrameEngine.Visual.FEVisi",
+                "get_playerControl");
+        LOG(LOG_LEVEL_INFO, "[NormalAttack] resolved get_playerControl=%p", (void*)s_getPlayerControl);
+    }
+    if (!s_getPlayerControl) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] get_playerControl 解析失败");
+        return false;
+    }
+    void* pPlayerControl = s_getPlayerControl(nullptr);
+    if (!pPlayerControl || !IsReadableMemory(pPlayerControl, 0xD0)) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] PlayerControl=%p 不可读", pPlayerControl);
+        return false;
+    }
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] PlayerControl=%p", pPlayerControl);
+
+    // ─── 2. 获取己方英雄 BattleActorVisi ───
+    typedef void* (*FnGetMyHero)(void*);
+    static FnGetMyHero s_getMyHero = nullptr;
+    if (!s_getMyHero) {
+        s_getMyHero = (FnGetMyHero)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FEVisi", "FrameEngine.Visual.FEVisi",
+                "get_myHero");
+        LOG(LOG_LEVEL_INFO, "[NormalAttack] resolved get_myHero=%p", (void*)s_getMyHero);
+    }
+    if (!s_getMyHero) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] get_myHero 解析失败");
+        return false;
+    }
+    void* pMyHeroVisi = s_getMyHero(nullptr);
+    if (!pMyHeroVisi || !IsReadableMemory(pMyHeroVisi, 0x160)) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] myHero=%p 不可读", pMyHeroVisi);
+        return false;
+    }
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] myHero=%p", pMyHeroVisi);
+
+    // ─── 3. BattleActorVisi → BattleActor ───
+    typedef void* (*FnGetActor)(void*);
+    static FnGetActor s_getActor = nullptr;
+    if (!s_getActor) {
+        s_getActor = (FnGetActor)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
+                "get_actor");
+    }
+    if (!s_getActor) return false;
+    void* pBattleActor = s_getActor(pMyHeroVisi);
+    if (!pBattleActor || !IsReadableMemory(pBattleActor, 0xB0)) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] BattleActor=%p 不可读", pBattleActor);
+        return false;
+    }
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] BattleActor=%p", pBattleActor);
+
+    // ─── 4. BattleActor → ActorComponentSkillMgr ───
+    typedef void* (*FnGetSkillMgr)(void*);
+    static FnGetSkillMgr s_getSkillMgr = nullptr;
+    if (!s_getSkillMgr) {
+        s_getSkillMgr = (FnGetSkillMgr)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActor", "FrameEngine.Logic.BattleActor",
+                "get_skillMgr");
+    }
+    if (!s_getSkillMgr) return false;
+    void* pSkillMgr = s_getSkillMgr(pBattleActor);
+    if (!pSkillMgr || !IsReadableMemory(pSkillMgr, 0x100)) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] SkillMgr=%p 不可读", pSkillMgr);
+        return false;
+    }
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] SkillMgr=%p", pSkillMgr);
+
+    // ─── 5. GetNormalAttackSkill → ActorSkill ───
+    typedef void* (*FnGetSkill)(void*);
+    static FnGetSkill s_getNormalAttackSkill = nullptr;
+    if (!s_getNormalAttackSkill) {
+        s_getNormalAttackSkill = (FnGetSkill)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorComponentSkillMgr", "FrameEngine.Logic.ActorComponentSkillMgr",
+                "GetNormalAttackSkill");
+        LOG(LOG_LEVEL_INFO, "[NormalAttack] resolved GetNormalAttackSkill=%p",
+            (void*)s_getNormalAttackSkill);
+    }
+    if (!s_getNormalAttackSkill) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] GetNormalAttackSkill 解析失败");
+        return false;
+    }
+    void* pNormalSkill = s_getNormalAttackSkill(pSkillMgr);
+    if (!pNormalSkill || !IsReadableMemory(pNormalSkill, 0xD0)) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] NormalAttackSkill=%p 不可读", pNormalSkill);
+        return false;
+    }
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] NormalAttackSkill=%p", pNormalSkill);
+
+    // ─── 6. 获取技能 resId (skillID) ───
+    typedef int32_t (*FnGetResId)(void*, void*);
+    static FnGetResId s_getResId = nullptr;
+    if (!s_getResId) {
+        s_getResId = (FnGetResId)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorSkill", "FrameEngine.Logic.ActorSkill",
+                "get_resId");
+    }
+    int32_t skillID = 0;
+    if (s_getResId) {
+        skillID = s_getResId(pNormalSkill, nullptr);
+    }
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] skillID=%d", skillID);
+
+    // ─── 7. 获取技能操作 ID (operID) ───
+    // ActorSkill.get_skillOp() → SkillOperateResObject → id (偏移 0x10, 来自 ResObject)
+    typedef void* (*FnGetSkillOp)(void*, void*);
+    static FnGetSkillOp s_getSkillOp = nullptr;
+    if (!s_getSkillOp) {
+        s_getSkillOp = (FnGetSkillOp)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "ActorSkill", "FrameEngine.Logic.ActorSkill",
+                "get_skillOp");
+    }
+    int32_t operID = 0;
+    if (s_getSkillOp) {
+        void* pSkillOp = s_getSkillOp(pNormalSkill, nullptr);
+        if (pSkillOp && IsReadableMemory(pSkillOp, 0x20)) {
+            // SkillOperateResObject 继承 ResObject, id 通常在 ResObject 的 native 偏移
+            // 尝试获取 iOperModeResId (偏移来自 get_iOperModeResId)
+            typedef int32_t (*FnGetOperResId)(void*, void*);
+            static FnGetOperResId s_getOperResId = nullptr;
+            if (!s_getOperResId) {
+                s_getOperResId = (FnGetOperResId)m_pfunctionInfo->GetMethodFun(
+                        "ilbil2cpp.so", "Assembly-CSharp.dll",
+                        "ActorSkill", "FrameEngine.Logic.ActorSkill",
+                        "get_iOperModeResId");
+            }
+            if (s_getOperResId) {
+                operID = s_getOperResId(pNormalSkill, nullptr);
+            }
+        }
+    }
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] operID=%d", operID);
+
+    // ─── 8. 调用 PlayerControl.OnTriggerSkillButtonDown ───
+    // C# 签名: void OnTriggerSkillButtonDown(
+    //     bool valid, int skillID, int operID,
+    //     TargetAutoRefreshType autoRefreshType,    // enum → int32
+    //     ButtonStateBuffer.DRIVE_TYPE driveType,   // enum → int32
+    //     bool isReButtonDown,
+    //     SkillSlotIndex_IndexEnum slotIndex)        // enum → int32
+    typedef void (*FnOnTriggerDown)(void*, bool, int32_t, int32_t, int32_t, int32_t, bool, int32_t, void*);
+    static FnOnTriggerDown s_onTriggerDown = nullptr;
+    if (!s_onTriggerDown) {
+        s_onTriggerDown = (FnOnTriggerDown)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "PlayerControl", "",
+                "OnTriggerSkillButtonDown");
+        LOG(LOG_LEVEL_INFO, "[NormalAttack] resolved OnTriggerSkillButtonDown=%p",
+            (void*)s_onTriggerDown);
+    }
+    if (!s_onTriggerDown) {
+        LOG(LOG_LEVEL_ERROR, "[NormalAttack] OnTriggerSkillButtonDown 解析失败");
+        return false;
+    }
+
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] >>> 触发 ButtonDown: valid=1, skillID=%d, operID=%d", skillID, operID);
+    s_onTriggerDown(pPlayerControl,
+                    true,       // valid — 操作合法
+                    skillID,    // 普攻技能 resId
+                    operID,     // 技能操作 ID
+                    0,          // TargetAutoRefreshType.None
+                    0,          // DRIVE_TYPE.Normal
+                    false,      // isReButtonDown — 非重复按下
+                    0,          // slotIndex — 普攻槽位 (0)
+                    nullptr);   // MethodInfo*
+
+    // ─── 9. 保存参数，延迟到下一个 tick 执行 ButtonUp ───
+    // 关键: ButtonDown 和 ButtonUp 不能在同一瞬间调用！
+    // 游戏的 Update 循环需要至少 1 帧来处理 ButtonDown 状态，
+    // 生成帧命令并同步到服务器。如果立即调用 ButtonUp，
+    // ButtonStateBuffer 中的 DOWN 状态会被 UP 覆盖，导致攻击无效。
+    //
+    // 解决: 将 ButtonUp 参数缓存到静态变量，由数据采集循环的下一个 tick 调用。
+    s_pendingButtonUp       = true;
+    s_pendingPlayerControl  = pPlayerControl;
+    s_pendingSkillID        = skillID;
+    s_pendingOperID         = operID;
+
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] ✓ ButtonDown 完成, ButtonUp 将在下一 tick 执行 (skillID=%d)", skillID);
+    return true;
+}
