@@ -61,6 +61,7 @@ ImVec2 GameOverlay::xzToMinimap(float wx, float wz,
 void GameOverlay::drawOverlay(const lol::MiniMapData& data, bool inBattle) {
     if (inBattle) {
         if (m_enableESP)        drawESP(data);
+        if (m_enableWards)      drawWardESP(data);
         if (m_enableRadar)      drawRadar(data);
         if (m_enableSkillRange) drawSkillRange(data);
         if (m_enableMinion)     drawMinionESP(data);
@@ -268,35 +269,56 @@ void GameOverlay::drawESP(const lol::MiniMapData& data) {
                          IM_COL32(200, 200, 200, 220), hpBuf);
     }
 
-    // ── 眼/守卫 ESP 方框 ──
-        if (m_enableWards) {
-            for (const auto& ward : data.wards) {
-                if (!ward.hasScreenPos) continue;
+    ImGui::End();
+}
 
-                float sx = ward.screenX;
-                float sy = screenH - ward.screenY;
+// ═══════════════════════════════════════════════════════════════════════════════
+// drawWardESP — 眼/守卫 ESP 方框（独立于英雄 ESP, 由 Wards 开关控制）
+// ═══════════════════════════════════════════════════════════════════════════════
 
-                constexpr float kMargin = 100.0f;
-                if (sx < -kMargin || sx > screenW + kMargin ||
-                    sy < -kMargin || sy > screenH + kMargin)
-                    continue;
+void GameOverlay::drawWardESP(const lol::MiniMapData& data) {
+    if (data.wards.empty()) return;
 
-                const float boxW = 30.0f;
-                const float boxH = 30.0f;
-                ImVec2 boxMin(sx - boxW * 0.5f, sy - boxH * 0.5f);
-                ImVec2 boxMax(sx + boxW * 0.5f, sy + boxH * 0.5f);
+    ImGuiIO& wIo = ImGui::GetIO();
+    const float screenW = wIo.DisplaySize.x;
+    const float screenH = wIo.DisplaySize.y;
 
-                const ImU32 wardColor = IM_COL32(50, 150, 255, 220);
-                espDraw->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 40));
-                espDraw->AddRect(boxMin, boxMax, wardColor, 0.0f, 0, 2.0f);
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(screenW, screenH));
+    ImGui::Begin("##WardESP", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoSavedSettings);
 
-                const char* label = "Ward";
-                ImVec2 textSize = ImGui::CalcTextSize(label);
-                float textX = sx - textSize.x * 0.5f;
-                float textY = boxMin.y - textSize.y - 1.0f;
-                espDraw->AddText(ImVec2(textX + 1, textY + 1), IM_COL32(0, 0, 0, 200), label);
-                espDraw->AddText(ImVec2(textX, textY), IM_COL32(100, 200, 255, 240), label);
-            }
+    auto* dl = ImGui::GetWindowDrawList();
+
+    for (const auto& ward : data.wards) {
+        if (!ward.hasScreenPos) continue;
+
+        float sx = ward.screenX;
+        float sy = screenH - ward.screenY;
+
+        constexpr float kMargin = 100.0f;
+        if (sx < -kMargin || sx > screenW + kMargin ||
+            sy < -kMargin || sy > screenH + kMargin)
+            continue;
+
+        const float boxW = 30.0f;
+        const float boxH = 30.0f;
+        ImVec2 boxMin(sx - boxW * 0.5f, sy - boxH * 0.5f);
+        ImVec2 boxMax(sx + boxW * 0.5f, sy + boxH * 0.5f);
+
+        const ImU32 wardColor = IM_COL32(50, 150, 255, 220);
+        dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 40));
+        dl->AddRect(boxMin, boxMax, wardColor, 0.0f, 0, 2.0f);
+
+        const char* label = "Ward";
+        ImVec2 textSize = ImGui::CalcTextSize(label);
+        float textX = sx - textSize.x * 0.5f;
+        float textY = boxMin.y - textSize.y - 1.0f;
+        dl->AddText(ImVec2(textX + 1, textY + 1), IM_COL32(0, 0, 0, 200), label);
+        dl->AddText(ImVec2(textX, textY), IM_COL32(100, 200, 255, 240), label);
     }
 
     ImGui::End();

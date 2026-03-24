@@ -40,6 +40,7 @@ namespace draw {
         // 子绘制
         void drawInfoPanel(const lol::MiniMapData& data, bool inBattle);
         void drawESP(const lol::MiniMapData& data);
+        void drawWardESP(const lol::MiniMapData& data);
         void drawRadar(const lol::MiniMapData& data);
         void drawSkillRange(const lol::MiniMapData& data);
         void drawMinionESP(const lol::MiniMapData& data);
