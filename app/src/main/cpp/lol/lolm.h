@@ -58,10 +58,23 @@ namespace lol {
         bool         hasScreenPos;  ///< 屏幕坐标是否有效
     };
 
+    /** @brief 小兵信息 */
+    struct MiniMapMinionInfo {
+        UnityVector3 worldPos;      ///< 世界坐标
+        bool         hasWorldPos;   ///< 坐标是否有效
+        float        curHp;         ///< 当前血量
+        float        maxHp;         ///< 最大血量
+        float        screenX;       ///< 屏幕坐标 X
+        float        screenY;       ///< 屏幕坐标 Y
+        bool         hasScreenPos;  ///< 屏幕坐标是否有效
+        bool         isEnemy;       ///< 是否为敌方小兵
+    };
+
     /** @brief 小地图一次遍历的全部数据快照 */
     struct MiniMapData {
         std::vector<MiniMapEnemyHeroInfo> enemyHeroes;  ///< 敌方英雄列表
         std::vector<MiniMapWardInfo>      wards;        ///< 眼/守卫列表
+        std::vector<MiniMapMinionInfo>    minions;      ///< 小兵列表
 
         // 己方英雄当前技能有效范围
         float       mySkillRange;    ///< 当前技能有效范围(float)，-1 无效
@@ -73,6 +86,7 @@ namespace lol {
         void clear() {
             enemyHeroes.clear();
             wards.clear();
+            minions.clear();
             mySkillRange = -1.0f;
             myWorldPos = {0,0,0};
             myScreenX = 0; myScreenY = 0;
@@ -119,6 +133,9 @@ namespace lol {
     public:
         /** @brief 遍历小地图图标，收集敌方英雄/眼位数据到 m_miniMapData */
         void* updateMiniMapData();
+
+        /** @brief 遍历 miniIcons 字典，收集小兵数据到 m_miniMapData.minions */
+        void updateMinionData();
 
         /** @brief 打印 m_miniMapData 中存储的所有数据（调试用） */
         void printMiniMapData() const;
@@ -214,6 +231,10 @@ namespace lol {
         bool isWardLikeIcon(int32_t iconType, void* actor,
                             const std::string& baseCtrlTypeName,
                             const std::string& actorTypeName);
+
+        /** @brief 根据小地图图标信息追加一条小兵数据，成功追加返回 true */
+        bool appendMinionData(int32_t iconType, void* actor,
+                      const UnityVector3& worldPos, bool hasWorldPos);
 
 
         /**

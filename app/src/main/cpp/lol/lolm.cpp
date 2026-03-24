@@ -379,6 +379,51 @@ bool lol::FEVisi::isWardLikeIcon(int32_t iconType, void* actor,
     return false;
 }
 
+bool lol::FEVisi::appendMinionData(int32_t iconType, void* actor,
+                                   const UnityVector3& worldPos, bool hasWorldPos) {
+    if ((MiniMapIconType)iconType != MiniMapIconType_Solider) return false;
+
+    MiniMapMinionInfo minion{};
+    minion.worldPos = worldPos;
+    minion.hasWorldPos = hasWorldPos;
+    minion.curHp = 0.0f;
+    minion.maxHp = 0.0f;
+    minion.screenX = 0.0f;
+    minion.screenY = 0.0f;
+    minion.hasScreenPos = false;
+    minion.isEnemy = true;
+
+    LOG(LOG_LEVEL_INFO, "[Minion] 读取到小兵信息 actor：%p", actor);
+
+    if (actor && IsReadableMemory(actor, sizeof(void*))) {
+        auto* pAttribute = getActorAttribute(actor);
+        LOG(LOG_LEVEL_INFO, "[Minion] actor：%p pAttribute=%p", actor, pAttribute);
+        if (pAttribute && IsReadableMemory(pAttribute, 0x20)) {
+            readEnemyHeroHP(pAttribute, &minion.curHp, &minion.maxHp);
+        }
+        LOG(LOG_LEVEL_INFO, "[Minion] #%d actor=%p attr=%p HP=%.0f/%.0f pos=(%.1f,%.1f,%.1f) w2s=%d",
+            (int)m_miniMapData.minions.size(), actor, pAttribute,
+            minion.curHp, minion.maxHp,
+            worldPos.x, worldPos.y, worldPos.z, hasWorldPos);
+    } else {
+        LOG(LOG_LEVEL_WARN, "[Minion] #%d actor=%p 不可读或为空, 跳过血量读取",
+            (int)m_miniMapData.minions.size(), actor);
+    }
+
+    if (hasWorldPos) {
+        float sx = 0.0f;
+        float sy = 0.0f;
+        if (worldToScreen(worldPos, sx, sy)) {
+            minion.screenX = sx;
+            minion.screenY = sy;
+            minion.hasScreenPos = true;
+        }
+    }
+
+    m_miniMapData.minions.push_back(minion);
+    return true;
+}
+
 
 void* lol::FEVisi::getActorAttribute(void* actorVisi) {
     if (!actorVisi) return nullptr;
@@ -806,6 +851,10 @@ void *lol::FEVisi::updateMiniMapData() {
         const int32_t iconType = get_MiniIconBaseCtrlType(baseCtrl);
         void* actor = s_getActor ? s_getActor(baseCtrl) : nullptr;
 
+        // ── 诊断: 打印所有图标类型（确认小兵是否在字典中） ──
+        LOG(LOG_LEVEL_INFO, "[MiniMap][Diag] entry[%d] iconType=%d actor=%p baseCtrl=%p",
+            i, iconType, actor, baseCtrl);
+
         // ── 获取世界坐标 ──
         UnityVector3 worldPos{};
         bool hasWorldPos = getIconWorldPos(baseCtrl, actor, &worldPos);
@@ -926,9 +975,89 @@ void *lol::FEVisi::updateMiniMapData() {
             }
             m_miniMapData.wards.push_back(ward);
         }
+
+        appendMinionData(iconType, actor, worldPos, hasWorldPos);
     }
 
     return pMiniIconsDictionary;
+}
+
+
+void lol::FEVisi::updateMinionData() {
+    m_miniMapData.minions.clear();
+
+    typedef void* (*FnGetActorVisiList)();
+    typedef void* (*FnGetLogicActor)(void*);
+    typedef bool (*FnIsSoilder)(void*, void*);
+
+    static FnGetActorVisiList s_getActorVisiList = nullptr;
+    static FnGetLogicActor s_getLogicActor = nullptr;
+    static FnIsSoilder s_isSoilder = nullptr;
+
+    if (!s_getActorVisiList) {
+        s_getActorVisiList = (FnGetActorVisiList)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FEVisi", "FrameEngine.Visual.FEVisi",
+                "GetActorVisiList");
+        LOG(LOG_LEVEL_INFO, "[Minion] resolve FEVisi.GetActorVisiList=%p", (void*)s_getActorVisiList);
+    }
+    if (!s_getLogicActor) {
+        s_getLogicActor = (FnGetLogicActor)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
+                "get_actor");
+        LOG(LOG_LEVEL_INFO, "[Minion] resolve BattleActorVisi.get_actor=%p", (void*)s_getLogicActor);
+    }
+    if (!s_isSoilder) {
+        s_isSoilder = (FnIsSoilder)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActor", "FrameEngine.Logic.BattleActor",
+                "IsSoilder");
+        LOG(LOG_LEVEL_INFO, "[Minion] resolve BattleActor.IsSoilder=%p", (void*)s_isSoilder);
+    }
+
+    if (!s_getActorVisiList || !s_getLogicActor || !s_isSoilder) {
+        LOG(LOG_LEVEL_ERROR, "[Minion] 小兵遍历依赖方法解析失败");
+        return;
+    }
+
+    auto* pVisiList = s_getActorVisiList();
+    if (!pVisiList || !IsReadableMemory(pVisiList, sizeof(Il2CppGenericList))) {
+        LOG(LOG_LEVEL_WARN, "[Minion] ActorVisiList=%p 不可读", pVisiList);
+        return;
+    }
+
+    auto* pList = reinterpret_cast<Il2CppGenericList*>(pVisiList);
+    auto* pItems = reinterpret_cast<Il2CppGenericArrayHeader*>(pList->_items);
+    int listSize = pList->_size;
+    LOG(LOG_LEVEL_INFO, "[Minion] ActorVisiList: _items=%p _size=%d", pList->_items, listSize);
+
+    if (!pItems || listSize <= 0 || listSize > 5000) {
+        LOG(LOG_LEVEL_WARN, "[Minion] ActorVisiList 无效: _items=%p size=%d", (void*)pItems, listSize);
+        return;
+    }
+
+    auto** elements = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(pItems) + sizeof(Il2CppGenericArrayHeader));
+    if (!IsReadableMemory(elements, listSize * sizeof(void*))) {
+        LOG(LOG_LEVEL_WARN, "[Minion] ActorVisiList elements 内存不可读");
+        return;
+    }
+
+    for (int i = 0; i < listSize; ++i) {
+        void* actorVisi = elements[i];
+        if (!actorVisi || !IsReadableMemory(actorVisi, sizeof(void*))) continue;
+
+        void* logicActor = s_getLogicActor(actorVisi);
+        if (!logicActor || !IsReadableMemory(logicActor, 0xA0)) continue;
+        if (!s_isSoilder(logicActor, nullptr)) continue;
+
+        UnityVector3 worldPos{};
+        bool hasWorldPos = tryGetWorldPosition(actorVisi, worldPos);
+
+        appendMinionData(MiniMapIconType_Solider, actorVisi, worldPos, hasWorldPos);
+    }
+
+    LOG(LOG_LEVEL_INFO, "[Minion] updateMinionData 完成，count=%zu", m_miniMapData.minions.size());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -937,8 +1066,8 @@ void *lol::FEVisi::updateMiniMapData() {
 
 void lol::FEVisi::printMiniMapData() const {
     LOG(LOG_LEVEL_INFO, "[ALLRADAR]╔══════════════ MiniMap Data Snapshot ══════════════╗");
-    LOG(LOG_LEVEL_INFO, "[ALLRADAR]║               英雄: %zu  眼/守卫: %zu",
-        m_miniMapData.enemyHeroes.size(), m_miniMapData.wards.size());
+    LOG(LOG_LEVEL_INFO, "[ALLRADAR]║  英雄: %zu  眼/守卫: %zu  小兵: %zu",
+        m_miniMapData.enemyHeroes.size(), m_miniMapData.wards.size(), m_miniMapData.minions.size());
     LOG(LOG_LEVEL_INFO, "[ALLRADAR]╠══════════════ Enemy Heroes ═══════════════════════╣");
 
     for (size_t i = 0; i < m_miniMapData.enemyHeroes.size(); ++i) {
@@ -964,7 +1093,21 @@ void lol::FEVisi::printMiniMapData() const {
             i, w.iconType, w.worldPos.x, w.worldPos.y, w.worldPos.z, w.hasWorldPos);
     }
 
-    LOG(LOG_LEVEL_INFO, "[ALLRADAR]╚══════════════════════════════���═══════════════════╝");
+    LOG(LOG_LEVEL_INFO, "[ALLRADAR]╚═══════════════════════════════════════════════════╝");
+
+    LOG(LOG_LEVEL_INFO, "[ALLRADAR]╠══════════════ Minions ════════════════════════════╣");
+    LOG(LOG_LEVEL_INFO, "[ALLRADAR]║ Count: %zu", m_miniMapData.minions.size());
+
+    for (size_t i = 0; i < m_miniMapData.minions.size(); ++i) {
+        const auto& mn = m_miniMapData.minions[i];
+        LOG(LOG_LEVEL_INFO,
+            "[ALLRADAR]║ [%zu] HP=%.0f/%.0f pos=(%.1f,%.1f,%.1f) scr=(%.0f,%.0f) scrValid=%d",
+            i, mn.curHp, mn.maxHp,
+            mn.worldPos.x, mn.worldPos.y, mn.worldPos.z,
+            mn.screenX, mn.screenY, mn.hasScreenPos);
+    }
+
+    LOG(LOG_LEVEL_INFO, "[ALLRADAR]╚═══════════════════════════════════════════════════╝");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

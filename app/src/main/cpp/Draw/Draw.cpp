@@ -62,6 +62,7 @@ void GameOverlay::drawOverlay(const lol::MiniMapData& data, bool inBattle) {
         if (m_enableESP)        drawESP(data);
         if (m_enableRadar)      drawRadar(data);
         if (m_enableSkillRange) drawSkillRange(data);
+        if (m_enableMinion)     drawMinionESP(data);
     }
     // Game Info 最后绘制，确保它在最上层可接收触摸/拖拽
     if (m_enableInfo) drawInfoPanel(data, inBattle);
@@ -116,6 +117,8 @@ void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
         ImGui::Checkbox("Wards",     &m_enableWards);
         ImGui::SameLine();
         ImGui::Checkbox("SkillRng",  &m_enableSkillRange);
+        ImGui::SameLine();
+        ImGui::Checkbox("Minion",    &m_enableMinion);
         ImGui::Separator();
 
         // ── 敌方英雄信息 ──
@@ -538,6 +541,75 @@ void GameOverlay::drawSkillRange(const lol::MiniMapData& data) {
         snprintf(label, sizeof(label), "%.1f", hero.atkRange);
         dl->AddText(ImVec2(cx + radiusPx + 3, cy - 6), textColor, label);
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// drawMinionESP — 小兵 ESP 方框 + 血条
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void GameOverlay::drawMinionESP(const lol::MiniMapData& data) {
+    if (data.minions.empty()) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    const float screenW = io.DisplaySize.x;
+    const float screenH = io.DisplaySize.y;
+
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2(screenW, screenH));
+    ImGui::Begin("##MinionESP", nullptr,
+                 ImGuiWindowFlags_NoTitleBar |
+                 ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoBackground |
+                 ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    for (const auto& m : data.minions) {
+        if (!m.hasScreenPos) continue;
+
+        float sx = m.screenX;
+        float sy = screenH - m.screenY; // Unity Y 翻转
+
+        constexpr float kMargin = 50.0f;
+        if (sx < -kMargin || sx > screenW + kMargin ||
+            sy < -kMargin || sy > screenH + kMargin)
+            continue;
+
+        // 小兵方框尺寸 (比英雄小)
+        const float boxW = 28.0f;
+        const float boxH = 40.0f;
+        ImVec2 boxMin(sx - boxW * 0.5f, sy - boxH * 0.7f);
+        ImVec2 boxMax(sx + boxW * 0.5f, sy + boxH * 0.3f);
+
+        // 血条颜色
+        float hpRatio = (m.maxHp > 0.0f) ? (m.curHp / m.maxHp) : 0.0f;
+        hpRatio = std::clamp(hpRatio, 0.0f, 1.0f);
+
+        ImU32 boxColor = m.isEnemy ? IM_COL32(255, 100, 100, 180) : IM_COL32(100, 255, 100, 180);
+
+        // 方框
+        dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 30));
+        dl->AddRect(boxMin, boxMax, boxColor, 0.0f, 0, 1.5f);
+
+        // 血条 (方框上方)
+        const float hpBarH = 3.0f;
+        const float hpBarY = boxMin.y - hpBarH - 1.0f;
+        ImVec2 hpBgMin(boxMin.x, hpBarY);
+        ImVec2 hpBgMax(boxMax.x, hpBarY + hpBarH);
+        ImVec2 hpFgMax(boxMin.x + (boxMax.x - boxMin.x) * hpRatio, hpBarY + hpBarH);
+
+        ImU32 hpColor = (hpRatio > 0.5f)  ? IM_COL32(0, 255, 0, 200) :
+                        (hpRatio > 0.25f) ? IM_COL32(255, 255, 0, 200) :
+                                             IM_COL32(255, 0, 0, 200);
+
+        dl->AddRectFilled(hpBgMin, hpBgMax, IM_COL32(0, 0, 0, 140));
+        dl->AddRectFilled(hpBgMin, hpFgMax, hpColor);
+    }
+
+    ImGui::End();
 }
 
 } // namespace draw

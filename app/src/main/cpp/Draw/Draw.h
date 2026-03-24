@@ -26,6 +26,7 @@ namespace draw {
         bool m_enableHeroInfo = false;
         bool m_enableWards   = false;
         bool m_enableSkillRange = false;
+        bool m_enableMinion  = false;
         int  m_radarRotation = 0;
 
         // 小地图坐标映射
@@ -40,6 +41,7 @@ namespace draw {
         void drawESP(const lol::MiniMapData& data);
         void drawRadar(const lol::MiniMapData& data);
         void drawSkillRange(const lol::MiniMapData& data);
+        void drawMinionESP(const lol::MiniMapData& data);
     };
 
 } // namespace draw

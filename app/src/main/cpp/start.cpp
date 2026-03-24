@@ -795,6 +795,7 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
                 SharedGameData::getInstance().setBattleActive(isBattle);
                 if (isBattle) {
                     lol.updateMiniMapData();
+                    lol.updateMinionData();
                     SharedGameData::getInstance().pushData(lol.getMiniMapData());
 
                     if (now - lastPrint >= std::chrono::milliseconds(kPrintMs)) {

@@ -531,7 +531,6 @@ pid_t Injector::findPidByName(const char* packageName) {
     if (dir) {
         struct dirent* entry;
         while ((entry = readdir(dir)) != nullptr) {
-            // 只检查数字目录 (PID)
             if (entry->d_type != DT_DIR) continue;
             bool isDigit = true;
             for (const char* c = entry->d_name; *c; c++) {
@@ -551,14 +550,14 @@ pid_t Injector::findPidByName(const char* packageName) {
             if (strcmp(cmdline, packageName) == 0) {
                 pid_t pid = atoi(entry->d_name);
                 closedir(dir);
-                LOG(LOG_LEVEL_INFO, "[Injector] 找到目标进程: %s -> pid=%d (/proc 扫描)", packageName, pid);
+                LOG(LOG_LEVEL_INFO, "[Injector] 找到目标进程: %s -> pid=%d", packageName, pid);
                 return pid;
             }
         }
         closedir(dir);
     }
 
-    // 方式2: 回退到 pidof (无需 su, 注入器已是 root)
+    // 方式2: 回退到 pidof (注入器已是 root, 不需要 su)
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "pidof %s", packageName);
     FILE* fp = popen(cmd, "r");
