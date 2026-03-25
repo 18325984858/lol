@@ -308,19 +308,19 @@ namespace lol {
         void tickPendingAttack();
 
         /**
-         * @brief  模拟英雄移动 —— 写入 ActorComponentMovement.joystickInput
+         * @brief  模拟英雄移动 —— 通过 PlayerControl.OnTriggerMoveButtonDown/Aim/Up 驱动
          * @param  dirX  X方向 (-1.0 ~ 1.0), 正值=右
          * @param  dirY  Y方向 (-1.0 ~ 1.0), 正值=前(屏幕上方)
-         * @return true=成功设置, false=失败
+         * @return true=成功触发, false=失败
          *
          * @details 必须每 tick 持续调用以维持移动。传入 (0, 0) 停止移动。
-         *          调用链:
-         *   1. FEVisi.get_myHero() → BattleActorVisi
-         *   2. BattleActorVisi.get_actor() → BattleActor
-         *   3. BattleActor.get_movement() → ActorComponentMovement
-         *   4. 写入 joystickInput 字段 (FixVector2, 编码为 Fix64)
          */
         bool simulateMovement(float dirX, float dirY);
+
+        bool simulateMoveUp();
+        bool simulateMoveDown();
+        bool simulateMoveLeft();
+        bool simulateMoveRight();
 
     private:
 
