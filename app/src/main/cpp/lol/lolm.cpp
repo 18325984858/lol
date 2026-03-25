@@ -6,6 +6,8 @@
 #include "../UnityApi/unityapi.h"
 #include "../Log/log.h"
 #include "LolOffset.h"
+#include <array>
+#include <cmath>
 #include <cstring>
 #include <unistd.h>   // pipe, write, close
 #include <errno.h>
@@ -1717,4 +1719,618 @@ bool lol::FEVisi::simulateNormalAttack() {
     s_pendingButtonDownAt  = std::chrono::steady_clock::now();
     LOG(LOG_LEVEL_INFO, "[NormalAttack] ButtonDown 完成，ButtonUp 将在满足最小按住时间后执行");
     return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// simulateMovement — 模拟英雄移动
+//
+// 通过写入 ActorComponentMovement.joystickInput (FixVector2) 驱动移动。
+// 必须每 tick 持续调用以维持移动方向；传入 (0,0) 停止移动。
+//
+// 方案: 通过 PlayerControl.OnMoveJoystick / ActorComponentMovement 的 C# 方法调用，
+//       不直接写入 native 内存，以确保帧同步正确传播。
+//
+// 调用链 (优先级):
+//   方式A: PlayerControl.OnMoveJoystick(FixVector2) — UI 层移动入口
+//   方式B: ActorComponentMovement.set_joystickInput(FixVector2) — 逻辑层 setter
+//   方式C: 枚举 ActorComponentMovementHero 所有方法尝试匹配
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bool lol::FEVisi::simulateMovement(float dirX, float dirY) {
+    if (!m_pfunctionInfo) return false;
+
+    // ─── Fix64 FixVector2 布局: { int64_t x; int64_t y; } ───
+    struct FixVector2 { int64_t x; int64_t y; };
+    enum TriggerArgKind {
+        kTriggerArgUnknown = 0,
+        kTriggerArgBool,
+        kTriggerArgFloat,
+        kTriggerArgDouble,
+        kTriggerArgInt32,
+        kTriggerArgInt64,
+        kTriggerArgFix64,
+        kTriggerArgFixVector2,
+        kTriggerArgUnityVector3,
+    };
+    struct TriggerMethodBinding {
+        const ::MethodInfo* method = nullptr;
+        std::array<TriggerArgKind, 3> kinds = {
+            kTriggerArgUnknown, kTriggerArgUnknown, kTriggerArgUnknown
+        };
+        std::array<std::string, 3> typeNames;
+        std::array<std::string, 3> paramNames;
+        bool supported = false;
+    };
+    enum TriggerStage {
+        kTriggerStageDown = 0,
+        kTriggerStageAim,
+        kTriggerStageUp,
+    };
+    enum MovementMethod {
+        kMovementUnresolved = 0,
+        kMovementPlayerControlTrigger = 1,
+        kMovementPlayerControlLegacy = 2,
+        kMovementSetter = 3,
+        kMovementRawFieldWrite = 4,
+    };
+
+    // ─── 一次性解析方法指针 ───
+    typedef void* (*FnVoid)(void*);
+
+    static FnVoid   s_getMyHero        = nullptr;
+    static FnVoid   s_getActor         = nullptr;
+    static FnVoid   s_getMovement      = nullptr;
+    static FnVoid   s_getPlayerControl = nullptr;
+
+    static TriggerMethodBinding s_triggerMoveDown;
+    static TriggerMethodBinding s_triggerMoveAim;
+    static TriggerMethodBinding s_triggerMoveUp;
+    static bool  s_triggerMoveHeld = false;
+    static float s_lastActiveDirX = 0.0f;
+    static float s_lastActiveDirY = 0.0f;
+
+    // 方式A: PlayerControl 层的移动方法 (多种候选签名)
+    // void PlayerControl.OnMoveJoystick(this, FixVector2 dir)
+    typedef void (*FnMoveJoystick)(void*, FixVector2);
+    // void PlayerControl.OnMoveJoystickUpdate(this, FixVector2 dir, MethodInfo*)
+    typedef void (*FnMoveJoystickUpdate)(void*, FixVector2, void*);
+    // void PlayerControl.SetMoveDirection(this, FixVector2 dir, MethodInfo*)
+    typedef void (*FnSetMoveDir)(void*, FixVector2, void*);
+
+    static FnMoveJoystick       s_onMoveJoystick       = nullptr;
+    static FnMoveJoystickUpdate s_onMoveJoystickUpdate = nullptr;
+    static FnSetMoveDir         s_setMoveDir           = nullptr;
+    static const char*          s_playerControlMethodName = nullptr;
+
+    // 方式B: ActorComponentMovement 的 setter
+    // void ActorComponentMovement.set_joystickInput(this, FixVector2 value, MethodInfo*)
+    typedef void (*FnSetJoystick)(void*, FixVector2, void*);
+    static FnSetJoystick s_setJoystickInput = nullptr;
+    static const char*   s_setterMethodName = nullptr;
+
+    static uint32_t s_joystickInputOffset = INVALID_OFFSET;
+    static uint32_t s_lastJoystickInputOffset = INVALID_OFFSET;
+
+    static float s_divideOfOne = 0.0f;
+    static int   s_method      = kMovementUnresolved;
+    static bool  s_resolved    = false;
+
+    auto normalizeTypeName = [](const char* rawName) -> std::string {
+        std::string typeName = rawName ? rawName : "";
+        for (char& ch : typeName) {
+            if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+        }
+        return typeName;
+    };
+    auto containsToken = [](const std::string& text, const char* token) -> bool {
+        return !text.empty() && token && text.find(token) != std::string::npos;
+    };
+    auto classifyTriggerArg = [&](const char* rawTypeName) -> TriggerArgKind {
+        std::string typeName = normalizeTypeName(rawTypeName);
+        if (typeName.empty()) return kTriggerArgUnknown;
+        if (containsToken(typeName, "boolean") || typeName == "bool") return kTriggerArgBool;
+        if (containsToken(typeName, "single") || typeName == "float") return kTriggerArgFloat;
+        if (containsToken(typeName, "double")) return kTriggerArgDouble;
+        if (containsToken(typeName, "vector3")) return kTriggerArgUnityVector3;
+        if (containsToken(typeName, "fixvector2")) return kTriggerArgFixVector2;
+        if (containsToken(typeName, "fix64")) return kTriggerArgFix64;
+        if (containsToken(typeName, "int32") || containsToken(typeName, "uint32")) return kTriggerArgInt32;
+        if (containsToken(typeName, "int64") || containsToken(typeName, "uint64")) return kTriggerArgInt64;
+        return kTriggerArgUnknown;
+    };
+    auto resolveTriggerBinding = [&](const ::MethodInfo* method) -> TriggerMethodBinding {
+        TriggerMethodBinding binding;
+        binding.method = method;
+        if (!method) return binding;
+
+        uint32_t paramCount = m_pfunctionInfo->il2cpp_method_get_param_count(method);
+        if (paramCount != 3) return binding;
+
+        bool supported = true;
+        for (uint32_t index = 0; index < 3; ++index) {
+            const ::Il2CppType* paramType = m_pfunctionInfo->il2cpp_method_get_param(method, index);
+            const char* rawTypeName = paramType ? m_pfunctionInfo->il2cpp_type_get_name(paramType) : nullptr;
+            const char* rawParamName = m_pfunctionInfo->il2cpp_method_get_param_name(method, index);
+            binding.typeNames[index] = rawTypeName ? rawTypeName : "<null>";
+            binding.paramNames[index] = rawParamName ? rawParamName : "";
+            binding.kinds[index] = classifyTriggerArg(rawTypeName);
+            if (binding.kinds[index] == kTriggerArgUnknown) supported = false;
+        }
+        binding.supported = supported;
+        return binding;
+    };
+    auto logTriggerBinding = [&](const char* label, const TriggerMethodBinding& binding) {
+        if (!binding.method) return;
+        LOG(LOG_LEVEL_INFO,
+            "[Movement] %s signature: (%s %s, %s %s, %s %s) supported=%d ptr=%p",
+            label,
+            binding.typeNames[0].c_str(), binding.paramNames[0].empty() ? "p0" : binding.paramNames[0].c_str(),
+            binding.typeNames[1].c_str(), binding.paramNames[1].empty() ? "p1" : binding.paramNames[1].c_str(),
+            binding.typeNames[2].c_str(), binding.paramNames[2].empty() ? "p2" : binding.paramNames[2].c_str(),
+            binding.supported ? 1 : 0,
+            (void*)binding.method->methodPointer);
+    };
+    auto invokeTriggerMethod = [&](void* playerControl,
+                                   const TriggerMethodBinding& binding,
+                                   TriggerStage stage,
+                                   float invokeDirX,
+                                   float invokeDirY,
+                                   const FixVector2& invokeFixDir) -> bool {
+        if (!playerControl || !binding.method) return false;
+
+        const float magnitude = std::sqrt(invokeDirX * invokeDirX + invokeDirY * invokeDirY);
+        const bool isPressed = (stage != kTriggerStageUp);
+        const bool preferStoredDirection = (stage == kTriggerStageUp && s_triggerMoveHeld);
+        const float effectiveDirX = preferStoredDirection ? s_lastActiveDirX : invokeDirX;
+        const float effectiveDirY = preferStoredDirection ? s_lastActiveDirY : invokeDirY;
+        const float clampedMagnitude = magnitude > 1.0f ? 1.0f : magnitude;
+        const float moveStrength = isPressed ? clampedMagnitude : 0.0f;
+        const float moveSpeed = isPressed ? clampedMagnitude : 0.0f;
+        FixVector2 effectiveFixDir = invokeFixDir;
+        if (preferStoredDirection) {
+            effectiveFixDir.x = (int64_t)((double)effectiveDirX / (double)s_divideOfOne);
+            effectiveFixDir.y = (int64_t)((double)effectiveDirY / (double)s_divideOfOne);
+        }
+        UnityVector3 forwardVector{0.0f, 0.0f, 0.0f};
+        if (magnitude > 0.0001f) {
+            const float invMagnitude = 1.0f / magnitude;
+            forwardVector.x = effectiveDirX * invMagnitude;
+            forwardVector.z = effectiveDirY * invMagnitude;
+        }
+
+        int scalarFloatCount = 0;
+        int scalarFix64Count = 0;
+        for (TriggerArgKind kind : binding.kinds) {
+            if (kind == kTriggerArgFloat || kind == kTriggerArgDouble) ++scalarFloatCount;
+            if (kind == kTriggerArgFix64 || kind == kTriggerArgInt64) ++scalarFix64Count;
+        }
+
+        bool boolStorage[3] = {};
+        float floatStorage[3] = {};
+        double doubleStorage[3] = {};
+        int32_t int32Storage[3] = {};
+        int64_t int64Storage[3] = {};
+        FixVector2 vectorStorage[3] = {};
+        UnityVector3 unityVector3Storage[3] = {};
+        void* invokeParams[3] = {};
+
+        int floatOrdinal = 0;
+        int fix64Ordinal = 0;
+        for (int index = 0; index < 3; ++index) {
+            std::string paramName = normalizeTypeName(binding.paramNames[index].c_str());
+            switch (binding.kinds[index]) {
+                case kTriggerArgBool:
+                    boolStorage[index] = isPressed;
+                    invokeParams[index] = &boolStorage[index];
+                    break;
+                case kTriggerArgFloat: {
+                    float value = 0.0f;
+                    if (containsToken(paramName, "movespeed") || containsToken(paramName, "speed")) {
+                        value = moveSpeed;
+                    } else if (containsToken(paramName, "movestrength") || containsToken(paramName, "strength")) {
+                        value = moveStrength;
+                    } else if (containsToken(paramName, "y") || containsToken(paramName, "vertical")) {
+                        value = effectiveDirY;
+                    } else if (containsToken(paramName, "magnitude") || containsToken(paramName, "length") || containsToken(paramName, "radius")) {
+                        value = magnitude;
+                    } else if (scalarFloatCount >= 2) {
+                        value = (floatOrdinal == 0) ? effectiveDirX : effectiveDirY;
+                        ++floatOrdinal;
+                    } else {
+                        value = effectiveDirX;
+                    }
+                    floatStorage[index] = value;
+                    invokeParams[index] = &floatStorage[index];
+                    break;
+                }
+                case kTriggerArgDouble: {
+                    double value = 0.0;
+                    if (containsToken(paramName, "movespeed") || containsToken(paramName, "speed")) {
+                        value = (double)moveSpeed;
+                    } else if (containsToken(paramName, "movestrength") || containsToken(paramName, "strength")) {
+                        value = (double)moveStrength;
+                    } else if (containsToken(paramName, "y") || containsToken(paramName, "vertical")) {
+                        value = (double)effectiveDirY;
+                    } else if (containsToken(paramName, "magnitude") || containsToken(paramName, "length") || containsToken(paramName, "radius")) {
+                        value = (double)magnitude;
+                    } else if (scalarFloatCount >= 2) {
+                        value = (floatOrdinal == 0) ? (double)effectiveDirX : (double)effectiveDirY;
+                        ++floatOrdinal;
+                    } else {
+                        value = (double)effectiveDirX;
+                    }
+                    doubleStorage[index] = value;
+                    invokeParams[index] = &doubleStorage[index];
+                    break;
+                }
+                case kTriggerArgInt32:
+                    int32Storage[index] = 0;
+                    invokeParams[index] = &int32Storage[index];
+                    break;
+                case kTriggerArgInt64:
+                case kTriggerArgFix64: {
+                    int64_t value = 0;
+                    if (containsToken(paramName, "y") || containsToken(paramName, "vertical")) {
+                        value = effectiveFixDir.y;
+                    } else if (containsToken(paramName, "magnitude") || containsToken(paramName, "length") || containsToken(paramName, "radius")) {
+                        value = (int64_t)((double)magnitude / (double)s_divideOfOne);
+                    } else if (scalarFix64Count >= 2) {
+                        value = (fix64Ordinal == 0) ? effectiveFixDir.x : effectiveFixDir.y;
+                        ++fix64Ordinal;
+                    } else {
+                        value = effectiveFixDir.x;
+                    }
+                    int64Storage[index] = value;
+                    invokeParams[index] = &int64Storage[index];
+                    break;
+                }
+                case kTriggerArgFixVector2:
+                    vectorStorage[index] = effectiveFixDir;
+                    invokeParams[index] = &vectorStorage[index];
+                    break;
+                case kTriggerArgUnityVector3:
+                    unityVector3Storage[index] = forwardVector;
+                    invokeParams[index] = &unityVector3Storage[index];
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        ::Il2CppException* invokeException = nullptr;
+        m_pfunctionInfo->il2cpp_runtime_invoke(binding.method, playerControl, invokeParams, &invokeException);
+        if (invokeException) {
+            LOG(LOG_LEVEL_ERROR, "[Movement] runtime_invoke %s 异常: exc=%p method=%p",
+                stage == kTriggerStageDown ? "Down" : (stage == kTriggerStageAim ? "Aim" : "Up"),
+                invokeException,
+                (void*)binding.method->methodPointer);
+            return false;
+        }
+        return true;
+    };
+
+    if (!s_resolved) {
+        s_resolved = true;
+
+        // ── 基础方法 ──
+        s_getMyHero = (FnVoid)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FEVisi", "FrameEngine.Visual.FEVisi", "get_myHero");
+        s_getActor = (FnVoid)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi", "get_actor");
+        s_getMovement = (FnVoid)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleActor", "FrameEngine.Logic.BattleActor", "get_movement");
+        s_getPlayerControl = (FnVoid)m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FEVisi", "FrameEngine.Visual.FEVisi", "get_playerControl");
+
+        // ── 方式A: 新版 PlayerControl 三态移动按钮 ──
+        {
+            auto* pcKlass = m_pfunctionInfo->FindClassByName(
+                    "ilbil2cpp.so", "Assembly-CSharp.dll", "PlayerControl", "");
+            if (pcKlass) {
+                m_pfunctionInfo->il2cpp_class_init_all_method(pcKlass);
+                void* iter = nullptr;
+                while (auto* method = m_pfunctionInfo->il2cpp_class_get_methods(pcKlass, &iter)) {
+                    const char* methodName = m_pfunctionInfo->il2cpp_method_get_name(method);
+                    if (!methodName || m_pfunctionInfo->il2cpp_method_get_param_count(method) != 3) continue;
+
+                    if (strcmp(methodName, "OnTriggerMoveButtonDown") == 0) {
+                        s_triggerMoveDown = resolveTriggerBinding(method);
+                    } else if (strcmp(methodName, "OnTriggerMoveButtonAim") == 0) {
+                        s_triggerMoveAim = resolveTriggerBinding(method);
+                    } else if (strcmp(methodName, "OnTriggerMoveButtonUp") == 0) {
+                        s_triggerMoveUp = resolveTriggerBinding(method);
+                    }
+                }
+
+                logTriggerBinding("OnTriggerMoveButtonDown", s_triggerMoveDown);
+                logTriggerBinding("OnTriggerMoveButtonAim", s_triggerMoveAim);
+                logTriggerBinding("OnTriggerMoveButtonUp", s_triggerMoveUp);
+
+                if (s_triggerMoveDown.method && s_triggerMoveAim.method && s_triggerMoveUp.method &&
+                    s_triggerMoveDown.supported && s_triggerMoveAim.supported && s_triggerMoveUp.supported) {
+                    s_method = kMovementPlayerControlTrigger;
+                    LOG(LOG_LEVEL_INFO, "[Movement] ✓ 方式A (trigger state machine): Down=%p Aim=%p Up=%p",
+                        (void*)s_triggerMoveDown.method->methodPointer,
+                        (void*)s_triggerMoveAim.method->methodPointer,
+                        (void*)s_triggerMoveUp.method->methodPointer);
+                }
+            }
+        }
+
+        // ── 方式B: 通过 GetMethodFun 查找旧版 PlayerControl 移动方法 ──
+        if (s_method == kMovementUnresolved) {
+            const char* pcMethods[] = {
+                "OnMoveJoystick", "OnMoveJoystickUpdate", "OnMoveStart",
+                "SetMoveDirection", "SetMoveDir",
+                "OnJoystickMove", "OnJoystickUpdate",
+                "HandleMoveInput", "ProcessMoveInput",
+            };
+            for (const char* name : pcMethods) {
+                if (s_method != kMovementUnresolved) break;
+                auto fn = m_pfunctionInfo->GetMethodFun(
+                        "ilbil2cpp.so", "Assembly-CSharp.dll",
+                        "PlayerControl", "", name);
+                if (fn) {
+                    if (strcmp(name, "OnMoveJoystick") == 0) {
+                        s_onMoveJoystick = reinterpret_cast<FnMoveJoystick>(fn);
+                    } else if (strcmp(name, "SetMoveDirection") == 0 || strcmp(name, "SetMoveDir") == 0) {
+                        s_setMoveDir = reinterpret_cast<FnSetMoveDir>(fn);
+                    } else {
+                        s_onMoveJoystickUpdate = reinterpret_cast<FnMoveJoystickUpdate>(fn);
+                    }
+                    s_playerControlMethodName = name;
+                    s_method = kMovementPlayerControlLegacy;
+                    LOG(LOG_LEVEL_INFO, "[Movement] ✓ 方式A (GetMethodFun): PlayerControl.%s=%p", name, (void*)fn);
+                }
+            }
+        }
+
+        // ── 方式C: 通过 GetMethodFun 查找 Movement setter ──
+        if (s_method == kMovementUnresolved) {
+            const char* movClasses[]  = { "ActorComponentMovementHero", "ActorComponentMovement" };
+            const char* movNs[]       = { "FrameEngine.Logic.ActorComponentMovementHero",
+                                          "FrameEngine.Logic.ActorComponentMovement" };
+            const char* setterNames[] = { "set_joystickInput", "SetJoystickInput", "OnJoystickInput" };
+            for (int ci = 0; ci < 2 && s_method == kMovementUnresolved; ++ci) {
+                for (const char* name : setterNames) {
+                    if (s_method != kMovementUnresolved) break;
+                    auto fn = (FnSetJoystick)m_pfunctionInfo->GetMethodFun(
+                            "ilbil2cpp.so", "Assembly-CSharp.dll",
+                            movClasses[ci], movNs[ci], name);
+                    if (fn) {
+                        s_setJoystickInput = fn;
+                        s_setterMethodName = name;
+                        s_method = kMovementSetter;
+                        LOG(LOG_LEVEL_INFO, "[Movement] ✓ 方式B (GetMethodFun): %s.%s=%p",
+                            movClasses[ci], name, (void*)fn);
+                    }
+                }
+            }
+        }
+
+        // ── 方式D: 直接写 movement.joystickInput / lastJoystickInput ──
+        if (s_method == kMovementUnresolved) {
+            uint32_t heroJoystickOffset = GetFieldOffset(
+                "Assembly-CSharp.dll",
+                "ActorComponentMovementHero",
+                "FrameEngine.Logic.ActorComponentMovementHero",
+                "joystickInput");
+            uint32_t heroLastJoystickOffset = GetFieldOffset(
+                "Assembly-CSharp.dll",
+                "ActorComponentMovementHero",
+                "FrameEngine.Logic.ActorComponentMovementHero",
+                "lastJoystickInput");
+
+            uint32_t baseJoystickOffset = GetFieldOffset(
+                "Assembly-CSharp.dll",
+                "ActorComponentMovement",
+                "FrameEngine.Logic.ActorComponentMovement",
+                "joystickInput");
+            uint32_t baseLastJoystickOffset = GetFieldOffset(
+                "Assembly-CSharp.dll",
+                "ActorComponentMovement",
+                "FrameEngine.Logic.ActorComponentMovement",
+                "lastJoystickInput");
+
+            if (heroJoystickOffset != INVALID_OFFSET) {
+            s_joystickInputOffset = heroJoystickOffset;
+            s_lastJoystickInputOffset = heroLastJoystickOffset;
+            } else if (baseJoystickOffset != INVALID_OFFSET) {
+            s_joystickInputOffset = baseJoystickOffset;
+            s_lastJoystickInputOffset = baseLastJoystickOffset;
+            }
+
+            LOG(LOG_LEVEL_INFO,
+            "[Movement] field probe: hero(joy=0x%X,last=0x%X) base(joy=0x%X,last=0x%X)",
+            heroJoystickOffset, heroLastJoystickOffset,
+            baseJoystickOffset, baseLastJoystickOffset);
+
+            if (s_joystickInputOffset != INVALID_OFFSET) {
+                s_method = kMovementRawFieldWrite;
+                LOG(LOG_LEVEL_INFO,
+                    "[Movement] ✓ 方式C (field write): joystickInput=0x%X lastJoystickInput=0x%X",
+                    s_joystickInputOffset, s_lastJoystickInputOffset);
+            }
+        }
+
+        // ── 诊断: 输出本版本实际暴露的移动相关入口 ──
+        if (s_method == kMovementUnresolved) {
+            LOG(LOG_LEVEL_WARN, "[Movement] GetMethodFun 未匹配任何移动方法，开始枚举诊断...");
+
+            // 枚举 PlayerControl 所有 Move/Joystick 相关方法名
+            auto* pcKlass = m_pfunctionInfo->FindClassByName(
+                    "ilbil2cpp.so", "Assembly-CSharp.dll", "PlayerControl", "");
+            if (pcKlass) {
+                m_pfunctionInfo->il2cpp_class_init_all_method(pcKlass);
+                void* iter = nullptr;
+                while (auto* method = m_pfunctionInfo->il2cpp_class_get_methods(pcKlass, &iter)) {
+                    const char* mname = m_pfunctionInfo->il2cpp_method_get_name(method);
+                    if (!mname) continue;
+                    if (strstr(mname, "Move") || strstr(mname, "move") ||
+                        strstr(mname, "Joystick") || strstr(mname, "joystick") ||
+                        strstr(mname, "Direction") || strstr(mname, "direction") ||
+                        strstr(mname, "Input") || strstr(mname, "input")) {
+                        int pcount = m_pfunctionInfo->il2cpp_method_get_param_count(method);
+                        LOG(LOG_LEVEL_INFO, "[Movement][Diag] PlayerControl.%s params=%d ptr=%p",
+                            mname, pcount, (void*)method->methodPointer);
+                    }
+                }
+            }
+
+            // 枚举 ActorComponentMovementHero 所有方法名
+            auto* movKlass = m_pfunctionInfo->FindClassByName(
+                    "ilbil2cpp.so", "Assembly-CSharp.dll",
+                    "ActorComponentMovementHero", "FrameEngine.Logic.ActorComponentMovementHero");
+            if (movKlass) {
+                m_pfunctionInfo->il2cpp_class_init_all_method(movKlass);
+                void* iter = nullptr;
+                while (auto* method = m_pfunctionInfo->il2cpp_class_get_methods(movKlass, &iter)) {
+                    const char* mname = m_pfunctionInfo->il2cpp_method_get_name(method);
+                    if (!mname) continue;
+                    int pcount = m_pfunctionInfo->il2cpp_method_get_param_count(method);
+                    LOG(LOG_LEVEL_INFO, "[Movement][Diag] MovementHero.%s params=%d ptr=%p",
+                        mname, pcount, (void*)method->methodPointer);
+                }
+            }
+        }
+
+        // ── Fix64 编码因子 ──
+        uint64_t rawBits = m_pfunctionInfo->GetStaticMember(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "Fix64", "FrameEngine.Common.Fix64", "divideOfOne");
+        memcpy(&s_divideOfOne, &rawBits, sizeof(float));
+
+        LOG(LOG_LEVEL_INFO,
+            "[Movement] resolved: method=%d legacy=%s setter=%s getMyHero=%p getActor=%p getMovement=%p "
+            "getPlayerControl=%p joystickInput=0x%X lastJoystickInput=0x%X divideOfOne=%e",
+            s_method,
+            s_playerControlMethodName ? s_playerControlMethodName : "<none>",
+            s_setterMethodName ? s_setterMethodName : "<none>",
+            (void*)s_getMyHero, (void*)s_getActor,
+            (void*)s_getMovement, (void*)s_getPlayerControl,
+            s_joystickInputOffset, s_lastJoystickInputOffset, s_divideOfOne);
+    }
+
+    // ─── 前置检查 ───
+    if (!s_getMyHero || !s_getActor) {
+        LOG(LOG_LEVEL_ERROR, "[Movement] 核心方法未解析");
+        return false;
+    }
+    if (s_method == kMovementUnresolved) {
+        LOG(LOG_LEVEL_ERROR, "[Movement] 未找到任何可用移动入口 (查看上方 [Movement][PC] 和 [Movement][Mov] 日志)");
+        return false;
+    }
+    if (s_divideOfOne == 0.0f) {
+        LOG(LOG_LEVEL_ERROR, "[Movement] Fix64.divideOfOne 为 0");
+        return false;
+    }
+
+    // ─── 编码方向为 FixVector2 ───
+    FixVector2 fixDir;
+    fixDir.x = (int64_t)((double)dirX / (double)s_divideOfOne);
+    fixDir.y = (int64_t)((double)dirY / (double)s_divideOfOne);
+    const bool hasDirection = (std::fabs(dirX) > 0.0001f || std::fabs(dirY) > 0.0001f);
+
+    // ─── 方式A: 新版 PlayerControl 三态移动按钮 ───
+    if (s_method == kMovementPlayerControlTrigger) {
+        void* pPlayerControl = s_getPlayerControl ? s_getPlayerControl(nullptr) : nullptr;
+        if (!pPlayerControl || !IsReadableMemory(pPlayerControl, 0xD0)) return false;
+
+        if (!hasDirection) {
+            if (!s_triggerMoveHeld) return true;
+            if (!invokeTriggerMethod(pPlayerControl, s_triggerMoveUp, kTriggerStageUp, dirX, dirY, fixDir)) {
+                LOG(LOG_LEVEL_WARN, "[Movement] 方式A(trigger) ButtonUp 调用失败");
+                return false;
+            }
+            s_triggerMoveHeld = false;
+            s_lastActiveDirX = 0.0f;
+            s_lastActiveDirY = 0.0f;
+            LOG(LOG_LEVEL_INFO, "[Movement] ✓ 方式A(trigger) Up dir=(%.3f,%.3f)", dirX, dirY);
+            return true;
+        }
+
+        if (!s_triggerMoveHeld) {
+            if (!invokeTriggerMethod(pPlayerControl, s_triggerMoveDown, kTriggerStageDown, dirX, dirY, fixDir)) {
+                LOG(LOG_LEVEL_WARN, "[Movement] 方式A(trigger) ButtonDown 调用失败");
+                return false;
+            }
+            s_triggerMoveHeld = true;
+        }
+        if (!invokeTriggerMethod(pPlayerControl, s_triggerMoveAim, kTriggerStageAim, dirX, dirY, fixDir)) {
+            LOG(LOG_LEVEL_WARN, "[Movement] 方式A(trigger) ButtonAim 调用失败");
+            return false;
+        }
+
+        s_lastActiveDirX = dirX;
+        s_lastActiveDirY = dirY;
+        LOG(LOG_LEVEL_INFO, "[Movement] ✓ 方式A(trigger) Aim dir=(%.3f,%.3f) fix=(0x%llX,0x%llX)",
+            dirX, dirY, (unsigned long long)fixDir.x, (unsigned long long)fixDir.y);
+        return true;
+    }
+
+    // ─── 方式B: 通过 PlayerControl 调用 ───
+    if (s_method == kMovementPlayerControlLegacy) {
+        void* pPlayerControl = s_getPlayerControl ? s_getPlayerControl(nullptr) : nullptr;
+        if (!pPlayerControl || !IsReadableMemory(pPlayerControl, 0xD0)) return false;
+
+        if (s_onMoveJoystick) {
+            s_onMoveJoystick(pPlayerControl, fixDir);
+        } else if (s_onMoveJoystickUpdate) {
+            s_onMoveJoystickUpdate(pPlayerControl, fixDir, nullptr);
+        } else if (s_setMoveDir) {
+            s_setMoveDir(pPlayerControl, fixDir, nullptr);
+        } else {
+            return false;
+        }
+
+        LOG(LOG_LEVEL_INFO, "[Movement] ✓ 方式A(%s) dir=(%.3f,%.3f) fix=(0x%llX,0x%llX)",
+            s_playerControlMethodName ? s_playerControlMethodName : "unknown",
+            dirX, dirY, (unsigned long long)fixDir.x, (unsigned long long)fixDir.y);
+        return true;
+    }
+
+    // ─── 方式C: 通过 ActorComponentMovement setter 调用 ───
+    if (s_method == kMovementSetter && s_setJoystickInput) {
+        void* hero = s_getMyHero(nullptr);
+        if (!hero || !IsReadableMemory(hero, 0x160)) return false;
+        void* actor = s_getActor(hero);
+        if (!actor || !IsReadableMemory(actor, 0x80)) return false;
+        void* movement = s_getMovement ? s_getMovement(actor) : ReadMemberPtr(actor, 0x70);
+        if (!movement || !IsReadableMemory(movement, 0x20)) return false;
+
+        s_setJoystickInput(movement, fixDir, nullptr);
+
+        LOG(LOG_LEVEL_INFO, "[Movement] ✓ 方式B(%s) dir=(%.3f,%.3f) fix=(0x%llX,0x%llX) movement=%p",
+            s_setterMethodName ? s_setterMethodName : "unknown",
+            dirX, dirY, (unsigned long long)fixDir.x, (unsigned long long)fixDir.y, movement);
+        return true;
+    }
+
+    // ─── 方式D: 直接写入 movement 字段，兼容方法名漂移版本 ───
+    if (s_method == kMovementRawFieldWrite && s_joystickInputOffset != INVALID_OFFSET) {
+        void* hero = s_getMyHero(nullptr);
+        if (!hero || !IsReadableMemory(hero, 0x160)) return false;
+        void* actor = s_getActor(hero);
+        if (!actor || !IsReadableMemory(actor, 0x80)) return false;
+        void* movement = s_getMovement ? s_getMovement(actor) : ReadMemberPtr(actor, 0x70);
+        if (!movement || !IsReadableMemory(movement, s_joystickInputOffset + sizeof(FixVector2))) return false;
+
+        *reinterpret_cast<FixVector2*>(reinterpret_cast<uint8_t*>(movement) + s_joystickInputOffset) = fixDir;
+        if (s_lastJoystickInputOffset != INVALID_OFFSET &&
+            IsReadableMemory(reinterpret_cast<uint8_t*>(movement) + s_lastJoystickInputOffset,
+                             sizeof(FixVector2))) {
+            *reinterpret_cast<FixVector2*>(reinterpret_cast<uint8_t*>(movement) + s_lastJoystickInputOffset) = fixDir;
+        }
+
+        LOG(LOG_LEVEL_INFO,
+            "[Movement] ✓ 方式C(field write) dir=(%.3f,%.3f) fix=(0x%llX,0x%llX) movement=%p",
+            dirX, dirY, (unsigned long long)fixDir.x, (unsigned long long)fixDir.y, movement);
+        return true;
+    }
+
+    return false;
 }
