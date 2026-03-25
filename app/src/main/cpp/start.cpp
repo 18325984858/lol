@@ -720,8 +720,8 @@ static void GuiNativeThread() {
     LOG(LOG_LEVEL_INFO, "[GuiNative] ══════ 启动直接绘制模式 (eglSwapBuffers Hook) ══════");
     installCrashGuard();
 
-
     void* swapAddr = dlsym(RTLD_DEFAULT, "eglSwapBuffers");
+
     if (!swapAddr) {
         void* eglLib = dlopen("libEGL.so", RTLD_LAZY);
         if (eglLib) {
@@ -777,6 +777,8 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
 
     constexpr int kCollectMs = 50;
     constexpr int kPrintMs   = 5000;
+    uint64_t lastNormalAttackSeq = 0;
+    uint64_t lastNormalAttackWarnSeq = 0;
     auto lastCollect = std::chrono::steady_clock::now();
     auto lastPrint   = lastCollect;
 
@@ -794,12 +796,17 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
                 bool isBattle = lol.get_BattleStarted();
                 SharedGameData::getInstance().setBattleActive(isBattle);
                 if (isBattle) {
-                    // ── 每 tick: 处理延迟的 ButtonUp（普攻第二阶段）──
                     lol.tickPendingAttack();
 
-                    // ── 检查 UI 请求的普攻触发 ──
-                    if (SharedGameData::getInstance().consumeNormalAttackRequest()) {
-                        lol.simulateNormalAttack();
+                    const uint64_t currentNormalAttackSeq = SharedGameData::getInstance().getNormalAttackRequestSeq();
+                    if (currentNormalAttackSeq != lastNormalAttackSeq) {
+                        if (lol.simulateNormalAttack()) {
+                            lastNormalAttackSeq = currentNormalAttackSeq;
+                            lastNormalAttackWarnSeq = 0;
+                        } else if (lastNormalAttackWarnSeq != currentNormalAttackSeq) {
+                            lastNormalAttackWarnSeq = currentNormalAttackSeq;
+                            LOG(LOG_LEVEL_WARN, "[TestFunction] 普攻执行失败，等待下一轮重试，请求序号=%llu", (unsigned long long)currentNormalAttackSeq);
+                        }
                     }
 
                     lol.updateMiniMapData();

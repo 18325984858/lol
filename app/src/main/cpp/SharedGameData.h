@@ -11,6 +11,8 @@
 #ifndef SHARED_GAME_DATA_H
 #define SHARED_GAME_DATA_H
 
+#include <condition_variable>
+#include <chrono>
 #include <mutex>
 #include <atomic>
 #include "lol/lolm.h"
@@ -65,12 +67,32 @@ public:
         return m_battleActive.load(std::memory_order_acquire);
     }
 
-    /** @brief UI 线程请求触发普攻 */
+    /** @brief UI 线程请求触发普攻（单次边沿请求） */
     void requestNormalAttack() {
+        m_normalAttackRequestSeq.fetch_add(1, std::memory_order_acq_rel);
         m_normalAttackRequested.store(true, std::memory_order_release);
+        m_attackCv.notify_one();
     }
 
-    /** @brief 数据线程消费普攻请求（返回 true 表示有请求待处理） */
+    /** @brief 获取当前普攻请求序号 */
+    uint64_t getNormalAttackRequestSeq() const {
+        return m_normalAttackRequestSeq.load(std::memory_order_acquire);
+    }
+
+    /** @brief 等待普攻请求到来或超时（用于输入线程降低空转） */
+    void waitForNormalAttackWork(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(m_attackMutex);
+        m_attackCv.wait_for(lock, timeout, [&]() {
+            return m_normalAttackRequested.load(std::memory_order_acquire) > 0;
+        });
+    }
+
+    /** @brief 查询是否存在待处理的普攻请求 */
+    bool hasNormalAttackRequest() const {
+        return m_normalAttackRequested.load(std::memory_order_acquire);
+    }
+
+    /** @brief 数据线程消费当前普攻请求 */
     bool consumeNormalAttackRequest() {
         return m_normalAttackRequested.exchange(false, std::memory_order_acq_rel);
     }
@@ -80,10 +102,13 @@ private:
     ~SharedGameData() = default;
 
     std::mutex m_mutex;
+    std::mutex m_attackMutex;
+    std::condition_variable m_attackCv;
     lol::MiniMapData m_data;
     std::atomic<bool> m_hasNewData{false};
     std::atomic<bool> m_battleActive{false};
     std::atomic<bool> m_normalAttackRequested{false};
+    std::atomic<uint64_t> m_normalAttackRequestSeq{0};
 };
 
 #endif // SHARED_GAME_DATA_H

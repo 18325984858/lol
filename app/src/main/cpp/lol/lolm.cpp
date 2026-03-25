@@ -1586,28 +1586,43 @@ std::vector<void*> lol::FEVisi::getAllSkillUILogics() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// simulateNormalAttack — 模拟普通攻击 (Phase 1: ButtonDown)
-// tickPendingAttack   — 延迟执行 ButtonUp (Phase 2)
+// simulateNormalAttack — 模拟普通攻击
+// 说明: 先发 ButtonDown，再进入“等待抬起”状态机
+//       主循环在满足最小按住时间后补发 ButtonUp，避免同步直调崩溃
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// 延迟 ButtonUp 的状态缓存
-static bool     s_pendingButtonUp      = false;
+enum class NormalAttackButtonState {
+    Idle,
+    WaitingRelease,
+};
+
+static NormalAttackButtonState s_normalAttackButtonState = NormalAttackButtonState::Idle;
 static void*    s_pendingPlayerControl = nullptr;
 static int32_t  s_pendingSkillID       = 0;
 static int32_t  s_pendingOperID        = 0;
-static int      s_pendingTickCount     = 0;   // 延迟 tick 计数器
-static constexpr int kButtonUpDelayTicks = 2; // 等待 2 个 tick (~150ms) 再发 ButtonUp
+static std::chrono::steady_clock::time_point s_pendingButtonDownAt;
+static constexpr auto kNormalAttackMinHold = std::chrono::milliseconds(140);
+
+static void clearNormalAttackState() {
+    s_normalAttackButtonState = NormalAttackButtonState::Idle;
+    s_pendingPlayerControl = nullptr;
+    s_pendingSkillID = 0;
+    s_pendingOperID = 0;
+    s_pendingButtonDownAt = std::chrono::steady_clock::time_point{};
+}
 
 void lol::FEVisi::tickPendingAttack() {
-    if (!s_pendingButtonUp) return;
+    if (s_normalAttackButtonState != NormalAttackButtonState::WaitingRelease) return;
 
-    // 每 tick 递减计数器，到 0 才执行 ButtonUp
-    if (--s_pendingTickCount > 0) return;
-    s_pendingButtonUp = false;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - s_pendingButtonDownAt < kNormalAttackMinHold) {
+        return;
+    }
 
     void* pPlayerControl = s_pendingPlayerControl;
     if (!pPlayerControl || !IsReadableMemory(pPlayerControl, 0xD0)) {
-        LOG(LOG_LEVEL_WARN, "[NormalAttack] tickPendingAttack: PlayerControl 已失效");
+        LOG(LOG_LEVEL_WARN, "[NormalAttack] tickPendingAttack: PlayerControl 已失效，放弃本次 ButtonUp");
+        clearNormalAttackState();
         return;
     }
 
@@ -1623,19 +1638,32 @@ void lol::FEVisi::tickPendingAttack() {
                 "PlayerControl", "",
                 "OnTriggerSkillButtonUp");
     }
-    if (!s_onTriggerUp) return;
+    if (!s_onTriggerUp) {
+        LOG(LOG_LEVEL_WARN, "[NormalAttack] ButtonUp 方法解析失败，放弃本次普攻");
+        clearNormalAttackState();
+        return;
+    }
 
-    LOG(LOG_LEVEL_INFO, "[NormalAttack] >>> 延迟触发 ButtonUp (skillID=%d)", s_pendingSkillID);
+    // 先清状态，再执行 ButtonUp，避免异常返回后重复进入同一个释放分支
+    const int32_t skillID = s_pendingSkillID;
+    const int32_t operID  = s_pendingOperID;
+    clearNormalAttackState();
+
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] >>> ButtonUp (deferred)");
     s_onTriggerUp(pPlayerControl,
                   0.0f, 1.0f,
                   0.0f, 0.0f, 1.0f,
-                  true, s_pendingSkillID, s_pendingOperID,
+                  true, skillID, operID,
                   0, 0, false, false, nullptr);
     LOG(LOG_LEVEL_INFO, "[NormalAttack] ✓ ButtonUp 完成");
 }
 
 bool lol::FEVisi::simulateNormalAttack() {
     if (!m_pfunctionInfo) return false;
+    if (s_normalAttackButtonState != NormalAttackButtonState::Idle) {
+        LOG(LOG_LEVEL_WARN, "[NormalAttack] 上一次普攻仍在等待抬起，忽略本次点击");
+        return false;
+    }
 
     // 1. PlayerControl
     typedef void* (*FnGetPlayerControl)(void*);
@@ -1681,12 +1709,12 @@ bool lol::FEVisi::simulateNormalAttack() {
     LOG(LOG_LEVEL_INFO, "[NormalAttack] >>> ButtonDown");
     s_onTriggerDown(pPlayerControl, true, skillID, operID, 0, 0, false, 0, nullptr);
 
-    // 5. 延迟 ButtonUp (等待 kButtonUpDelayTicks 个 tick)
-    s_pendingButtonUp       = true;
-    s_pendingPlayerControl  = pPlayerControl;
-    s_pendingSkillID        = skillID;
-    s_pendingOperID         = operID;
-    s_pendingTickCount      = kButtonUpDelayTicks;
-    LOG(LOG_LEVEL_INFO, "[NormalAttack] ✓ ButtonDown 完成, ButtonUp 将在 %d tick 后执行", kButtonUpDelayTicks);
+    // 5. 进入等待抬起状态，至少保持一小段按下时间，避免过快抬起导致首次普攻无效
+    s_normalAttackButtonState = NormalAttackButtonState::WaitingRelease;
+    s_pendingPlayerControl = pPlayerControl;
+    s_pendingSkillID       = skillID;
+    s_pendingOperID        = operID;
+    s_pendingButtonDownAt  = std::chrono::steady_clock::now();
+    LOG(LOG_LEVEL_INFO, "[NormalAttack] ButtonDown 完成，ButtonUp 将在满足最小按住时间后执行");
     return true;
 }
