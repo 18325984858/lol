@@ -393,18 +393,25 @@ bool lol::FEVisi::appendMinionData(int32_t iconType, void* actor,
     minion.screenX = 0.0f;
     minion.screenY = 0.0f;
     minion.hasScreenPos = false;
-    minion.isEnemy = true;
+    minion.objId = 0;
+    minion.camp = -1;
+    minion.isEnemy = false;
 
     LOG(LOG_LEVEL_INFO, "[Minion] 读取到小兵信息 actor：%p", actor);
 
     if (actor && IsReadableMemory(actor, sizeof(void*))) {
+        minion.objId = readActorObjId(actor);
+        minion.camp = readActorCamp(actor);
+        minion.isEnemy = (m_miniMapData.myCamp >= 0 && minion.camp >= 0 && minion.camp != m_miniMapData.myCamp);
+
         auto* pAttribute = getActorAttribute(actor);
         LOG(LOG_LEVEL_INFO, "[Minion] actor：%p pAttribute=%p", actor, pAttribute);
         if (pAttribute && IsReadableMemory(pAttribute, 0x20)) {
             readEnemyHeroHP(pAttribute, &minion.curHp, &minion.maxHp);
         }
-        LOG(LOG_LEVEL_INFO, "[Minion] #%d actor=%p attr=%p HP=%.0f/%.0f pos=(%.1f,%.1f,%.1f) w2s=%d",
-            (int)m_miniMapData.minions.size(), actor, pAttribute,
+        LOG(LOG_LEVEL_INFO, "[Minion] #%d actor=%p objId=%u camp=%d myCamp=%d enemy=%d attr=%p HP=%.0f/%.0f pos=(%.1f,%.1f,%.1f) w2s=%d",
+            (int)m_miniMapData.minions.size(), actor,
+            minion.objId, minion.camp, m_miniMapData.myCamp, minion.isEnemy, pAttribute,
             minion.curHp, minion.maxHp,
             worldPos.x, worldPos.y, worldPos.z, hasWorldPos);
     } else {
@@ -424,6 +431,39 @@ bool lol::FEVisi::appendMinionData(int32_t iconType, void* actor,
 
     m_miniMapData.minions.push_back(minion);
     return true;
+}
+
+uint32_t lol::FEVisi::readActorObjId(void* actorVisi) {
+    if (!actorVisi || !m_pfunctionInfo || !IsReadableMemory(actorVisi, sizeof(void*))) return 0;
+
+    typedef uint32_t (*FnGetObjId)(void*);
+    static FnGetObjId s_getObjId = nullptr;
+    if (!s_getObjId) {
+        s_getObjId = reinterpret_cast<FnGetObjId>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FixGameObjectVisi", "FrameEngine.Visual.FixGameObjectVisi",
+                "get_objId"));
+        LOG(LOG_LEVEL_INFO, "[Minion] resolve FixGameObjectVisi.get_objId=%p", (void*)s_getObjId);
+    }
+
+    return s_getObjId ? s_getObjId(actorVisi) : 0;
+}
+
+int32_t lol::FEVisi::readActorCamp(void* actorVisi) {
+    if (!actorVisi || !IsReadableMemory(actorVisi, sizeof(void*))) return -1;
+
+    static uint32_t s_campOffset = INVALID_OFFSET;
+    if (s_campOffset == INVALID_OFFSET) {
+        s_campOffset = GetFieldOffset(
+                "Assembly-CSharp.dll",
+                "BattleActorVisi",
+                "FrameEngine.Visual.BattleActorVisi",
+                "_camp");
+        LOG(LOG_LEVEL_INFO, "[Minion] resolve BattleActorVisi._camp offset=%u", s_campOffset);
+    }
+
+    if (s_campOffset == INVALID_OFFSET) return -1;
+    return ReadMemberValue<int32_t>(actorVisi, s_campOffset);
 }
 
 
@@ -948,6 +988,13 @@ void *lol::FEVisi::updateMiniMapData() {
             info.worldPos    = worldPos;
             info.hasWorldPos = hasWorldPos;
 
+            if ((MiniMapIconType)iconType == MiniMapIconType_MyTeamHero && actor && IsReadableMemory(actor, sizeof(void*))) {
+                const int32_t myCamp = readActorCamp(actor);
+                if (myCamp >= 0) {
+                    m_miniMapData.myCamp = myCamp;
+                }
+            }
+
             // ── 世界坐标 → 屏幕坐标 (W2S) ──
             info.hasScreenPos = false;
             if (hasWorldPos) {
@@ -1136,8 +1183,8 @@ void lol::FEVisi::printMiniMapData() const {
     for (size_t i = 0; i < m_miniMapData.minions.size(); ++i) {
         const auto& mn = m_miniMapData.minions[i];
         LOG(LOG_LEVEL_INFO,
-            "[ALLRADAR]║ [%zu] HP=%.0f/%.0f pos=(%.1f,%.1f,%.1f) scr=(%.0f,%.0f) scrValid=%d",
-            i, mn.curHp, mn.maxHp,
+            "[ALLRADAR]║ [%zu] objId=%u camp=%d enemy=%d HP=%.0f/%.0f pos=(%.1f,%.1f,%.1f) scr=(%.0f,%.0f) scrValid=%d",
+            i, mn.objId, mn.camp, mn.isEnemy, mn.curHp, mn.maxHp,
             mn.worldPos.x, mn.worldPos.y, mn.worldPos.z,
             mn.screenX, mn.screenY, mn.hasScreenPos);
     }

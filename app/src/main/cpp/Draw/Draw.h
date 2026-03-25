@@ -9,6 +9,10 @@ namespace touch_input {
     const char* getRotationLabel();
     void cycleRotation();
     int getRotation();
+    void toggleSurfaceRotationLock();
+    bool isSurfaceRotationLockEnabled();
+    void toggleRotationCorrectionLock();
+    bool isRotationCorrectionLocked();
 }
 
 namespace draw {
@@ -27,6 +31,7 @@ namespace draw {
         bool m_enableWards   = false;
         bool m_enableSkillRange = false;
         bool m_enableMinion  = false;
+        bool m_enableAutoFarm = false;
         float m_lastHitHpThreshold = 120.0f;
         int  m_radarRotation = 0;
 
@@ -40,7 +45,6 @@ namespace draw {
         // 子绘制
         void drawInfoPanel(const lol::MiniMapData& data, bool inBattle);
         void drawESP(const lol::MiniMapData& data);
-        void drawWardESP(const lol::MiniMapData& data);
         void drawRadar(const lol::MiniMapData& data);
         void drawSkillRange(const lol::MiniMapData& data);
         void drawMinionESP(const lol::MiniMapData& data);

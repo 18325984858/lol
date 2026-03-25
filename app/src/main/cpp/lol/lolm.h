@@ -73,6 +73,8 @@ namespace lol {
         float        screenX;       ///< 屏幕坐标 X
         float        screenY;       ///< 屏幕坐标 Y
         bool         hasScreenPos;  ///< 屏幕坐标是否有效
+        uint32_t     objId;         ///< 目标对象 ID
+        int32_t      camp;          ///< 所属阵营
         bool         isEnemy;       ///< 是否为敌方小兵
     };
 
@@ -88,6 +90,7 @@ namespace lol {
         float       myScreenX;       ///< 己方屏幕 X
         float       myScreenY;       ///< 己方屏幕 Y
         bool        hasMyScreenPos;  ///< 己方屏幕坐标是否有效
+        int32_t     myCamp;          ///< 己方阵营，-1 无效
         std::vector<ScreenPoint> mySkillRangeScreenPoints; ///< 己方攻击范围投影轮廓
 
         void clear() {
@@ -98,6 +101,7 @@ namespace lol {
             myWorldPos = {0,0,0};
             myScreenX = 0; myScreenY = 0;
             hasMyScreenPos = false;
+            myCamp = -1;
             mySkillRangeScreenPoints.clear();
         }
     };
@@ -243,6 +247,12 @@ namespace lol {
         /** @brief 根据小地图图标信息追加一条小兵数据，成功追加返回 true */
         bool appendMinionData(int32_t iconType, void* actor,
                       const UnityVector3& worldPos, bool hasWorldPos);
+
+        /** @brief 读取可视对象 objId，失败返回 0 */
+        uint32_t readActorObjId(void* actorVisi);
+
+        /** @brief 读取对象 camp，失败返回 -1 */
+        int32_t readActorCamp(void* actorVisi);
 
         /** @brief 基于 WorldToScreenPoint 生成己方攻击范围的屏幕投影轮廓 */
         bool buildProjectedRangeRing(const UnityVector3& centerWorld, float range,

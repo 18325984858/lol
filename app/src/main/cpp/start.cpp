@@ -19,7 +19,9 @@
 #include <cctype>
 #include <cstring>
 #include <cerrno>
+#include <limits>
 #include <dlfcn.h>
+#include <jni.h>
 
 // 线程安全游戏数据桥接
 #include "SharedGameData.h"
@@ -93,6 +95,8 @@ static void installCrashGuard() {
 
 namespace touch_input {
 
+    using JniGetCreatedJavaVMsFn = jint (*)(JavaVM**, jsize, jsize*);
+
     static int   s_fd       = -2;     // -2=未初始化/重试中, -1=永久失败, >=0=有效
     static char  s_devPath[64] = {0};
     static char  s_devName[128] = {0};
@@ -106,6 +110,8 @@ namespace touch_input {
     static int   s_retryCount = 0;
     static std::chrono::steady_clock::time_point s_lastRetry{};
     static bool  s_loggedOpenPermissionError = false;
+    static bool  s_lockToSurfaceOrientation = false;
+    static bool  s_lastTouchingState = false;
 
     // ── 触摸坐标旋转模式 ──
     //
@@ -117,22 +123,430 @@ namespace touch_input {
     //    2 = ROTATION_180
     //    3 = ROTATION_270 (顺时针90°, 反向横屏)
     //
-    static int s_rotation = 3;
+    static int s_rotation = -1;
+    static int s_lastAutoRotation = 0;
+    static int s_lastJavaTouchRotation = -1;
+    static int s_activeTouchRotation = -1;
+    static int s_lockedCorrectionRotation = -1;
+    static bool s_pendingMirrorResolve = false;
+    static bool s_rotationCorrectionLocked = false;
+    static float s_touchStartRawX = -1.0f;
+    static float s_touchStartRawY = -1.0f;
+
+    static int displayRotationToTouchRotation(int displayRotation) {
+        displayRotation &= 3;
+        return displayRotation;
+    }
+
+    static int getAutoRotation(float screenW, float screenH);
+
+    static int getEffectiveRotation(float screenW, float screenH) {
+        if (s_rotationCorrectionLocked && s_lockedCorrectionRotation >= 0) {
+            return s_lockedCorrectionRotation;
+        }
+
+        if (s_rotation >= 0) {
+            return s_rotation;
+        }
+
+        return getAutoRotation(screenW, screenH);
+    }
+
+    static int captureCurrentRotationForLock() {
+        if (s_activeTouchRotation >= 0) return s_activeTouchRotation;
+        if (s_rotation >= 0) return s_rotation;
+        if (s_lastAutoRotation >= 0) return s_lastAutoRotation;
+        return 0;
+    }
+
+    static bool isLandscapeRotation(int rotation) {
+        return rotation == 1 || rotation == 3;
+    }
+
+    static int inferRotationFromSurface(float screenW, float screenH, int fallbackRotation) {
+        const bool surfaceLandscape = (screenW > screenH);
+        const bool fallbackMatchesSurface = surfaceLandscape
+            ? isLandscapeRotation(fallbackRotation)
+            : !isLandscapeRotation(fallbackRotation);
+        if (fallbackMatchesSurface) return fallbackRotation;
+
+        const bool lastMatchesSurface = surfaceLandscape
+            ? isLandscapeRotation(s_lastAutoRotation)
+            : !isLandscapeRotation(s_lastAutoRotation);
+        if (lastMatchesSurface) return s_lastAutoRotation;
+
+        return surfaceLandscape ? 3 : 0;
+    }
+
+    static bool hasLandscapeMirrorAmbiguity(float screenW, float screenH) {
+        if (!s_lockToSurfaceOrientation) return false;
+        if (screenW <= screenH) return false;
+        if (s_lastJavaTouchRotation < 0) return false;
+        int surfaceRotation = inferRotationFromSurface(screenW, screenH, s_lastJavaTouchRotation);
+        return isLandscapeRotation(surfaceRotation) &&
+               isLandscapeRotation(s_lastJavaTouchRotation) &&
+               surfaceRotation != s_lastJavaTouchRotation;
+    }
+
+    static int resolveAutoRotationForTouchStart(float screenW, float screenH) {
+        int autoRotation = getAutoRotation(screenW, screenH);
+        s_pendingMirrorResolve = hasLandscapeMirrorAmbiguity(screenW, screenH);
+        return autoRotation;
+    }
+
+    static void tryResolveMirrorFromFirstDrag(float screenW, float screenH) {
+        if (!s_pendingMirrorResolve) return;
+        if (s_lastJavaTouchRotation < 0) {
+            s_pendingMirrorResolve = false;
+            return;
+        }
+
+        float dx = s_rawX - s_touchStartRawX;
+        float dy = s_rawY - s_touchStartRawY;
+        float dragDistanceSq = dx * dx + dy * dy;
+        if (dragDistanceSq < 0.0025f) return;
+
+        if (std::fabs(dx) < 0.03f && std::fabs(dy) < 0.03f) return;
+
+        int surfaceRotation = inferRotationFromSurface(screenW, screenH, s_lastJavaTouchRotation);
+        if (surfaceRotation != s_lastJavaTouchRotation) {
+            LOG(LOG_LEVEL_INFO,
+                "[Touch] 首次拖动触发镜像自校正: surface=%d -> java=%d drag=(%.3f,%.3f)",
+                surfaceRotation, s_lastJavaTouchRotation, dx, dy);
+            s_activeTouchRotation = s_lastJavaTouchRotation;
+            s_lastAutoRotation = s_lastJavaTouchRotation;
+        }
+        s_pendingMirrorResolve = false;
+    }
+
+    static JavaVM* getJavaVM() {
+        static JavaVM* s_javaVm = nullptr;
+        static bool s_resolved = false;
+        if (s_resolved) return s_javaVm;
+        s_resolved = true;
+
+        auto resolveFromHandle = [&](void* handle) -> JavaVM* {
+            if (!handle) return nullptr;
+            auto fn = reinterpret_cast<JniGetCreatedJavaVMsFn>(dlsym(handle, "JNI_GetCreatedJavaVMs"));
+            if (!fn) return nullptr;
+
+            JavaVM* vmBuf[2] = {nullptr, nullptr};
+            jsize vmCount = 0;
+            if (fn(vmBuf, 2, &vmCount) != JNI_OK || vmCount <= 0) return nullptr;
+            return vmBuf[0];
+        };
+
+        s_javaVm = resolveFromHandle(RTLD_DEFAULT);
+        if (!s_javaVm) {
+            void* libArt = dlopen("libart.so", RTLD_NOW | RTLD_NOLOAD);
+            s_javaVm = resolveFromHandle(libArt);
+            if (libArt) dlclose(libArt);
+        }
+        if (!s_javaVm) {
+            void* libAndroidRuntime = dlopen("libandroid_runtime.so", RTLD_NOW | RTLD_NOLOAD);
+            s_javaVm = resolveFromHandle(libAndroidRuntime);
+            if (libAndroidRuntime) dlclose(libAndroidRuntime);
+        }
+
+        LOG(LOG_LEVEL_INFO, "[Touch] JavaVM resolve: %p", s_javaVm);
+        return s_javaVm;
+    }
+
+    static int queryDisplayRotationFromContext(JNIEnv* env, jobject context) {
+        if (!env || !context) return -1;
+
+        int rotation = -1;
+        jclass contextClass = env->FindClass("android/content/Context");
+        jfieldID windowServiceField = contextClass
+            ? env->GetStaticFieldID(contextClass, "WINDOW_SERVICE", "Ljava/lang/String;")
+            : nullptr;
+        jstring windowService = windowServiceField
+            ? reinterpret_cast<jstring>(env->GetStaticObjectField(contextClass, windowServiceField))
+            : nullptr;
+
+        jclass objectClass = env->GetObjectClass(context);
+        jmethodID getSystemService = objectClass
+            ? env->GetMethodID(objectClass, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;")
+            : nullptr;
+        jobject windowManager = (getSystemService && windowService)
+            ? env->CallObjectMethod(context, getSystemService, windowService)
+            : nullptr;
+        if (windowManager) {
+            jclass wmClass = env->GetObjectClass(windowManager);
+            jmethodID getDefaultDisplay = wmClass
+                ? env->GetMethodID(wmClass, "getDefaultDisplay", "()Landroid/view/Display;")
+                : nullptr;
+            jobject display = getDefaultDisplay
+                ? env->CallObjectMethod(windowManager, getDefaultDisplay)
+                : nullptr;
+            if (display) {
+                jclass displayClass = env->GetObjectClass(display);
+                jmethodID getRotation = displayClass
+                    ? env->GetMethodID(displayClass, "getRotation", "()I")
+                    : nullptr;
+                if (getRotation) {
+                    rotation = (int)env->CallIntMethod(display, getRotation);
+                }
+                if (displayClass) env->DeleteLocalRef(displayClass);
+                env->DeleteLocalRef(display);
+            }
+            if (wmClass) env->DeleteLocalRef(wmClass);
+            env->DeleteLocalRef(windowManager);
+        }
+
+        if (windowService) env->DeleteLocalRef(windowService);
+        if (objectClass) env->DeleteLocalRef(objectClass);
+        if (contextClass) env->DeleteLocalRef(contextClass);
+        return rotation;
+    }
+
+    static jobject queryCurrentActivityFromActivityThread(JNIEnv* env) {
+        if (!env) return nullptr;
+
+        jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
+        if (!activityThreadClass || env->ExceptionCheck()) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return nullptr;
+        }
+
+        jmethodID currentActivityThread = env->GetStaticMethodID(
+            activityThreadClass, "currentActivityThread", "()Landroid/app/ActivityThread;");
+        jobject activityThread = currentActivityThread
+            ? env->CallStaticObjectMethod(activityThreadClass, currentActivityThread)
+            : nullptr;
+        if (!activityThread || env->ExceptionCheck()) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (activityThread) env->DeleteLocalRef(activityThread);
+            env->DeleteLocalRef(activityThreadClass);
+            return nullptr;
+        }
+
+        jfieldID activitiesField = env->GetFieldID(
+            activityThreadClass, "mActivities", "Landroid/util/ArrayMap;");
+        jobject activities = activitiesField
+            ? env->GetObjectField(activityThread, activitiesField)
+            : nullptr;
+        if (!activities || env->ExceptionCheck()) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (activities) env->DeleteLocalRef(activities);
+            env->DeleteLocalRef(activityThread);
+            env->DeleteLocalRef(activityThreadClass);
+            return nullptr;
+        }
+
+        jobject activity = nullptr;
+        jclass arrayMapClass = env->GetObjectClass(activities);
+        jmethodID sizeMethod = arrayMapClass
+            ? env->GetMethodID(arrayMapClass, "size", "()I")
+            : nullptr;
+        jmethodID valueAtMethod = arrayMapClass
+            ? env->GetMethodID(arrayMapClass, "valueAt", "(I)Ljava/lang/Object;")
+            : nullptr;
+        jint size = (sizeMethod && valueAtMethod) ? env->CallIntMethod(activities, sizeMethod) : 0;
+        if (!env->ExceptionCheck()) {
+            for (jint index = 0; index < size && !activity; ++index) {
+                jobject record = env->CallObjectMethod(activities, valueAtMethod, index);
+                if (!record || env->ExceptionCheck()) {
+                    if (env->ExceptionCheck()) env->ExceptionClear();
+                    if (record) env->DeleteLocalRef(record);
+                    continue;
+                }
+
+                jclass recordClass = env->GetObjectClass(record);
+                jfieldID pausedField = recordClass
+                    ? env->GetFieldID(recordClass, "paused", "Z")
+                    : nullptr;
+                jfieldID activityField = recordClass
+                    ? env->GetFieldID(recordClass, "activity", "Landroid/app/Activity;")
+                    : nullptr;
+                jboolean paused = pausedField ? env->GetBooleanField(record, pausedField) : JNI_FALSE;
+                jobject candidate = activityField ? env->GetObjectField(record, activityField) : nullptr;
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                    if (candidate) env->DeleteLocalRef(candidate);
+                    if (recordClass) env->DeleteLocalRef(recordClass);
+                    env->DeleteLocalRef(record);
+                    continue;
+                }
+
+                if (candidate && !paused) {
+                    activity = candidate;
+                } else if (candidate) {
+                    env->DeleteLocalRef(candidate);
+                }
+
+                if (recordClass) env->DeleteLocalRef(recordClass);
+                env->DeleteLocalRef(record);
+            }
+        }
+
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (arrayMapClass) env->DeleteLocalRef(arrayMapClass);
+        env->DeleteLocalRef(activities);
+        env->DeleteLocalRef(activityThread);
+        env->DeleteLocalRef(activityThreadClass);
+        return activity;
+    }
+
+    static int queryDisplayRotationFromJava() {
+        JavaVM* javaVm = getJavaVM();
+        if (!javaVm) return -1;
+
+        JNIEnv* env = nullptr;
+        bool attachedHere = false;
+        jint envStat = javaVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+        if (envStat == JNI_EDETACHED) {
+            if (javaVm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) {
+                return -1;
+            }
+            attachedHere = true;
+        } else if (envStat != JNI_OK || !env) {
+            return -1;
+        }
+
+        int rotation = -1;
+        jclass unityPlayerClass = env->FindClass("com/unity3d/player/UnityPlayer");
+        if (unityPlayerClass && !env->ExceptionCheck()) {
+            jfieldID currentActivityField = env->GetStaticFieldID(
+                unityPlayerClass, "currentActivity", "Landroid/app/Activity;");
+            if (currentActivityField) {
+                jobject activity = env->GetStaticObjectField(unityPlayerClass, currentActivityField);
+                if (activity) {
+                    rotation = queryDisplayRotationFromContext(env, activity);
+                    env->DeleteLocalRef(activity);
+                }
+            }
+            env->DeleteLocalRef(unityPlayerClass);
+        }
+
+        if (rotation < 0 && env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+
+        if (rotation < 0) {
+            jobject activity = queryCurrentActivityFromActivityThread(env);
+            if (activity) {
+                rotation = queryDisplayRotationFromContext(env, activity);
+                env->DeleteLocalRef(activity);
+            }
+        }
+
+        if (rotation < 0 && env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+
+        if (rotation < 0) {
+            jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
+            if (activityThreadClass && !env->ExceptionCheck()) {
+                jmethodID currentApplication = env->GetStaticMethodID(
+                    activityThreadClass, "currentApplication", "()Landroid/app/Application;");
+                jobject application = currentApplication
+                    ? env->CallStaticObjectMethod(activityThreadClass, currentApplication)
+                    : nullptr;
+                if (application) {
+                    rotation = queryDisplayRotationFromContext(env, application);
+                    env->DeleteLocalRef(application);
+                }
+                env->DeleteLocalRef(activityThreadClass);
+            }
+        }
+
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            rotation = -1;
+        }
+
+        if (attachedHere) javaVm->DetachCurrentThread();
+        return rotation;
+    }
+
+    static int getAutoRotation(float screenW, float screenH) {
+        static auto s_lastQuery = std::chrono::steady_clock::time_point{};
+        auto now = std::chrono::steady_clock::now();
+        if (s_lastQuery.time_since_epoch().count() == 0 ||
+            now - s_lastQuery >= std::chrono::milliseconds(500)) {
+            s_lastQuery = now;
+            int queriedRotation = queryDisplayRotationFromJava();
+            if (queriedRotation >= 0 && queriedRotation <= 3) {
+                int touchRotation = displayRotationToTouchRotation(queriedRotation);
+                s_lastJavaTouchRotation = touchRotation;
+                s_lastAutoRotation = s_lockToSurfaceOrientation
+                    ? inferRotationFromSurface(screenW, screenH, touchRotation)
+                    : touchRotation;
+            } else {
+                bool surfaceLandscape = (screenW > screenH);
+                bool digitizerPortrait = (s_absMaxY > s_absMaxX * 1.1f);
+                if (s_lockToSurfaceOrientation) {
+                    s_lastAutoRotation = inferRotationFromSurface(screenW, screenH, s_lastAutoRotation);
+                } else if (surfaceLandscape && digitizerPortrait) {
+                    s_lastAutoRotation = 3;
+                } else if (!surfaceLandscape && s_absMaxX > s_absMaxY * 1.1f) {
+                    s_lastAutoRotation = 1;
+                } else {
+                    s_lastAutoRotation = 0;
+                }
+            }
+        }
+        return s_lastAutoRotation;
+    }
 
     /** @brief 循环切换旋转模式 (供 UI 按钮调用) */
     void cycleRotation() {
-        if (s_rotation < 0) s_rotation = 0;   // 从自动 → 手动0
-        else s_rotation = (s_rotation + 1) % 4;
-        LOG(LOG_LEVEL_INFO, "[Touch] 旋转模式切换 → %d (0=无, 1=90°, 2=180°, 3=270°)", s_rotation);
+        if (s_rotationCorrectionLocked) {
+            LOG(LOG_LEVEL_INFO, "[Touch] 旋转矫正已锁定，忽略 Rot 按钮");
+            return;
+        }
+        if (s_rotation < 0) {
+            s_rotation = 0;
+        } else if (s_rotation >= 3) {
+            s_rotation = -1;
+        } else {
+            s_rotation += 1;
+        }
+        LOG(LOG_LEVEL_INFO, "[Touch] 旋转模式切换 → %s", getRotationLabel());
     }
 
     /** @brief 获取当前旋转值 */
     int getRotation() { return s_rotation; }
 
+    void toggleSurfaceRotationLock() {
+        s_lockToSurfaceOrientation = !s_lockToSurfaceOrientation;
+        LOG(LOG_LEVEL_INFO, "[Touch] Surface 方向锁定 → %d", s_lockToSurfaceOrientation ? 1 : 0);
+    }
+
+    bool isSurfaceRotationLockEnabled() {
+        return s_lockToSurfaceOrientation;
+    }
+
+    void toggleRotationCorrectionLock() {
+        if (!s_rotationCorrectionLocked) {
+            s_lockedCorrectionRotation = captureCurrentRotationForLock();
+            s_rotationCorrectionLocked = true;
+            LOG(LOG_LEVEL_INFO, "[Touch] 旋转矫正锁定 → ON (rot=%d)", s_lockedCorrectionRotation);
+            return;
+        }
+
+        s_rotationCorrectionLocked = false;
+        s_lockedCorrectionRotation = -1;
+        LOG(LOG_LEVEL_INFO, "[Touch] 旋转矫正锁定 → OFF");
+    }
+
+    bool isRotationCorrectionLocked() {
+        return s_rotationCorrectionLocked;
+    }
+
     /** @brief 获取当前旋转模式描述 */
     const char* getRotationLabel() {
+        static thread_local char label[32];
         switch (s_rotation) {
-            case -1: return "Auto";
+            case -1:
+                snprintf(label, sizeof(label), "%s%s:%d",
+                         s_lockToSurfaceOrientation ? "AutoS" : "AutoD",
+                         s_rotationCorrectionLocked ? "L" : "",
+                         (s_rotationCorrectionLocked && s_lockedCorrectionRotation >= 0
+                            ? s_lockedCorrectionRotation
+                            : s_lastAutoRotation) * 90);
+                return label;
             case 0:  return "0";
             case 1:  return "90";
             case 2:  return "180";
@@ -346,6 +760,11 @@ namespace touch_input {
             s_fd = best.fd;
             s_absMaxX = best.absMaxX;
             s_absMaxY = best.absMaxY;
+            if (s_rotation < 0) {
+                bool digitizerPortrait = (s_absMaxY > s_absMaxX * 1.1f);
+                s_lastAutoRotation = digitizerPortrait ? 3 : 0;
+                s_lastJavaTouchRotation = s_lastAutoRotation;
+            }
             snprintf(s_devPath, sizeof(s_devPath), "%s", best.path);
             snprintf(s_devName, sizeof(s_devName), "%s", best.name);
             LOG(LOG_LEVEL_INFO, "[Touch] ✓ 选中触摸设备: %s (%s) score=%d (重试 %d 次)",
@@ -368,7 +787,7 @@ namespace touch_input {
      *   ROTATION_0:   screenX = rawX * W,           screenY = rawY * H
      *   ROTATION_90:  screenX = (1-rawY) * W,       screenY = rawX * H     (逆时针90°)
      *   ROTATION_180: screenX = (1-rawX) * W,       screenY = (1-rawY) * H
-     *   ROTATION_270: screenX = rawY * W,            screenY = (1-rawX) * H (顺时针90°)
+    *   ROTATION_270: screenX = rawY * W,            screenY = (1-rawX) * H (顺时针90°)
      */
     static void processEvents(float screenW, float screenH) {
         if (s_fd < 0) return;
@@ -379,18 +798,18 @@ namespace touch_input {
                 case EV_ABS:
                     // 多点触控协议 B (优先)
                     if (ev.code == ABS_MT_POSITION_X) {
-                        s_rawX = (float)ev.value / s_absMaxX;
+                        s_rawX = std::clamp((float)ev.value / s_absMaxX, 0.0f, 1.0f);
                         posUpdated = true;
                     } else if (ev.code == ABS_MT_POSITION_Y) {
-                        s_rawY = (float)ev.value / s_absMaxY;
+                        s_rawY = std::clamp((float)ev.value / s_absMaxY, 0.0f, 1.0f);
                         posUpdated = true;
                     }
                     // 单点触控协议 (fallback)
                     else if (ev.code == ABS_X) {
-                        s_rawX = (float)ev.value / s_absMaxX;
+                        s_rawX = std::clamp((float)ev.value / s_absMaxX, 0.0f, 1.0f);
                         posUpdated = true;
                     } else if (ev.code == ABS_Y) {
-                        s_rawY = (float)ev.value / s_absMaxY;
+                        s_rawY = std::clamp((float)ev.value / s_absMaxY, 0.0f, 1.0f);
                         posUpdated = true;
                     }
                     // 触摸状态
@@ -406,18 +825,32 @@ namespace touch_input {
                         auto& io = ImGui::GetIO();
                         if (s_rawX >= 0.0f && s_rawY >= 0.0f) {
 
+                            if (s_touching && !s_lastTouchingState) {
+                                s_touchStartRawX = s_rawX;
+                                s_touchStartRawY = s_rawY;
+                                s_activeTouchRotation = s_rotationCorrectionLocked
+                                    ? s_lockedCorrectionRotation
+                                    : ((s_rotation < 0)
+                                        ? resolveAutoRotationForTouchStart(screenW, screenH)
+                                        : s_rotation);
+                            } else if (!s_touching && s_lastTouchingState) {
+                                s_activeTouchRotation = -1;
+                                s_pendingMirrorResolve = false;
+                                s_touchStartRawX = -1.0f;
+                                s_touchStartRawY = -1.0f;
+                            }
+
                             // ── 确定旋转模式 ──
-                            int rot = s_rotation;
+                            int rot = s_rotationCorrectionLocked
+                                ? s_lockedCorrectionRotation
+                                : s_rotation;
                             if (rot < 0) {
-                                // 自动检测: 屏幕横屏 + 数字化仪竖屏 → 需要旋转
-                                bool surfaceLandscape  = (screenW > screenH);
-                                bool digitizerPortrait = (s_absMaxY > s_absMaxX * 1.1f);
-                                if (surfaceLandscape && digitizerPortrait) {
-                                    rot = 1;  // 默认 ROTATION_90 (逆时针横屏, 最常见)
-                                } else if (!surfaceLandscape && s_absMaxX > s_absMaxY * 1.1f) {
-                                    rot = 1;  // 竖屏surface + 横屏digitizer (罕见, 尝试90°)
+                                if (s_activeTouchRotation >= 0) {
+                                    rot = s_activeTouchRotation;
+                                    tryResolveMirrorFromFirstDrag(screenW, screenH);
+                                    rot = s_activeTouchRotation;
                                 } else {
-                                    rot = 0;  // 方向一致, 无需旋转
+                                    rot = getEffectiveRotation(screenW, screenH);
                                 }
                             }
 
@@ -452,6 +885,7 @@ namespace touch_input {
                             s_touching = true;
                         }
                         io.MouseDown[0] = s_touching;
+                        s_lastTouchingState = s_touching;
                         posUpdated = false;
                     }
                     break;
@@ -720,8 +1154,8 @@ static void GuiNativeThread() {
     LOG(LOG_LEVEL_INFO, "[GuiNative] ══════ 启动直接绘制模式 (eglSwapBuffers Hook) ══════");
     installCrashGuard();
 
-    void* swapAddr = dlsym(RTLD_DEFAULT, "eglSwapBuffers");
 
+    void* swapAddr = dlsym(RTLD_DEFAULT, "eglSwapBuffers");
     if (!swapAddr) {
         void* eglLib = dlopen("libEGL.so", RTLD_LAZY);
         if (eglLib) {
@@ -764,6 +1198,180 @@ static void GuiNativeThread() {
 // TestFunction — 数据采集主入口 (实时刷新)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+namespace {
+
+struct AutoClearTargetSet {
+    const lol::MiniMapMinionInfo* nearest = nullptr;
+    const lol::MiniMapMinionInfo* lowestHpInRange = nullptr;
+};
+
+bool isFiniteAutoFarmValue(float value) {
+    return std::isfinite(value);
+}
+
+bool hasValidAutoFarmWorldPos(const lol::UnityVector3& pos) {
+    return isFiniteAutoFarmValue(pos.x) &&
+           isFiniteAutoFarmValue(pos.y) &&
+           isFiniteAutoFarmValue(pos.z);
+}
+
+AutoClearTargetSet selectAutoClearTargets(const lol::MiniMapData& data) {
+    AutoClearTargetSet result;
+    if (data.minions.empty()) return result;
+    if (!hasValidAutoFarmWorldPos(data.myWorldPos)) return result;
+
+    const float attackRangeSq = data.mySkillRange > 0.0f
+        ? (data.mySkillRange * data.mySkillRange)
+        : -1.0f;
+    float nearestDistanceSq = std::numeric_limits<float>::infinity();
+    float lowestHp = std::numeric_limits<float>::infinity();
+    float lowestHpDistanceSq = std::numeric_limits<float>::infinity();
+
+    for (const auto& minion : data.minions) {
+        if (!minion.isEnemy || !minion.hasWorldPos || minion.curHp <= 0.0f) continue;
+        if (!hasValidAutoFarmWorldPos(minion.worldPos)) continue;
+
+        const float dx = minion.worldPos.x - data.myWorldPos.x;
+        const float dz = minion.worldPos.z - data.myWorldPos.z;
+        const float distanceSq = dx * dx + dz * dz;
+
+        if (distanceSq < nearestDistanceSq) {
+            nearestDistanceSq = distanceSq;
+            result.nearest = &minion;
+        }
+
+        if (attackRangeSq > 0.0f && distanceSq <= attackRangeSq) {
+            if (minion.curHp < lowestHp ||
+                (std::fabs(minion.curHp - lowestHp) < 0.001f && distanceSq < lowestHpDistanceSq)) {
+                lowestHp = minion.curHp;
+                lowestHpDistanceSq = distanceSq;
+                result.lowestHpInRange = &minion;
+            }
+        }
+    }
+
+    return result;
+}
+
+void processAutoClearMinions(lol::lol& game,
+                             const lol::MiniMapData& data,
+                             std::chrono::steady_clock::time_point now) {
+    static bool s_autoFarmMoving = false;
+    static auto s_lastAttackAt = std::chrono::steady_clock::time_point{};
+    static auto s_lastMoveCommandAt = std::chrono::steady_clock::time_point{};
+    static auto s_lastStopMoveAt = std::chrono::steady_clock::time_point{};
+    static float s_lastMoveDirX = 0.0f;
+    static float s_lastMoveDirY = 0.0f;
+
+    auto stopAutoMove = [&]() {
+        if (!s_autoFarmMoving) return;
+        game.simulateMovement(0.0f, 0.0f);
+        s_autoFarmMoving = false;
+        s_lastMoveDirX = 0.0f;
+        s_lastMoveDirY = 0.0f;
+        s_lastStopMoveAt = now;
+    };
+
+    if (!SharedGameData::getInstance().isAutoClearMinionsEnabled()) {
+        stopAutoMove();
+        return;
+    }
+
+    if (data.mySkillRange <= 0.0f || !hasValidAutoFarmWorldPos(data.myWorldPos)) {
+        stopAutoMove();
+        return;
+    }
+
+    const auto targets = selectAutoClearTargets(data);
+    if (targets.lowestHpInRange) {
+        stopAutoMove();
+
+        LOG(LOG_LEVEL_INFO,
+            "[AutoFarm] attack target objId=%u camp=%d enemy=%d hp=%.0f/%.0f pos=(%.1f,%.1f,%.1f)",
+            targets.lowestHpInRange->objId,
+            targets.lowestHpInRange->camp,
+            targets.lowestHpInRange->isEnemy,
+            targets.lowestHpInRange->curHp,
+            targets.lowestHpInRange->maxHp,
+            targets.lowestHpInRange->worldPos.x,
+            targets.lowestHpInRange->worldPos.y,
+            targets.lowestHpInRange->worldPos.z);
+
+        constexpr auto kStopBeforeAttackDelay = std::chrono::milliseconds(120);
+        if (s_lastStopMoveAt.time_since_epoch().count() != 0 &&
+            now - s_lastStopMoveAt < kStopBeforeAttackDelay) {
+            return;
+        }
+
+        constexpr auto kAttackCooldown = std::chrono::milliseconds(350);
+        if (s_lastAttackAt.time_since_epoch().count() == 0 || now - s_lastAttackAt >= kAttackCooldown) {
+            if (game.simulateNormalAttack()) {
+                s_lastAttackAt = now;
+            }
+        }
+        return;
+    }
+
+    if (!targets.nearest || !targets.nearest->hasWorldPos) {
+        stopAutoMove();
+        return;
+    }
+
+    const float dx = targets.nearest->worldPos.x - data.myWorldPos.x;
+    const float dz = targets.nearest->worldPos.z - data.myWorldPos.z;
+    const float distanceSq = dx * dx + dz * dz;
+
+    LOG(LOG_LEVEL_INFO,
+        "[AutoFarm] move target objId=%u camp=%d enemy=%d hp=%.0f/%.0f pos=(%.1f,%.1f,%.1f) dist=%.2f",
+        targets.nearest->objId,
+        targets.nearest->camp,
+        targets.nearest->isEnemy,
+        targets.nearest->curHp,
+        targets.nearest->maxHp,
+        targets.nearest->worldPos.x,
+        targets.nearest->worldPos.y,
+        targets.nearest->worldPos.z,
+        std::sqrt(distanceSq));
+
+    if (distanceSq <= 0.0001f) {
+        stopAutoMove();
+        return;
+    }
+
+    if (data.mySkillRange > 0.0f) {
+        const float stopDistance = std::max(0.5f, data.mySkillRange - 0.35f);
+        if (distanceSq <= stopDistance * stopDistance) {
+            stopAutoMove();
+            return;
+        }
+    }
+
+    const float distance = std::sqrt(distanceSq);
+    const float dirX = dx / distance;
+    const float dirY = dz / distance;
+
+    constexpr auto kMoveCommandInterval = std::chrono::milliseconds(90);
+    const bool moveIntervalElapsed =
+        s_lastMoveCommandAt.time_since_epoch().count() == 0 ||
+        now - s_lastMoveCommandAt >= kMoveCommandInterval;
+    const bool directionChanged =
+        !s_autoFarmMoving ||
+        std::fabs(dirX - s_lastMoveDirX) >= 0.08f ||
+        std::fabs(dirY - s_lastMoveDirY) >= 0.08f;
+    if (!moveIntervalElapsed && !directionChanged) {
+        return;
+    }
+
+    if (game.simulateMovement(dirX, dirY)) {
+        s_autoFarmMoving = true;
+        s_lastMoveDirX = dirX;
+        s_lastMoveDirY = dirY;
+        s_lastMoveCommandAt = now;
+    }
+}
+
+} // namespace
+
 static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
                          void *pMetadataRegistration, void *pGlobalMetadataHeader,
                          void *pMetadataImagesTable) {
@@ -777,8 +1385,6 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
 
     constexpr int kCollectMs = 50;
     constexpr int kPrintMs   = 5000;
-    uint64_t lastNormalAttackSeq = 0;
-    uint64_t lastNormalAttackWarnSeq = 0;
     auto lastCollect = std::chrono::steady_clock::now();
     auto lastPrint   = lastCollect;
 
@@ -796,22 +1402,13 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
                 bool isBattle = lol.get_BattleStarted();
                 SharedGameData::getInstance().setBattleActive(isBattle);
                 if (isBattle) {
-                    lol.tickPendingAttack();
-
-                    const uint64_t currentNormalAttackSeq = SharedGameData::getInstance().getNormalAttackRequestSeq();
-                    if (currentNormalAttackSeq != lastNormalAttackSeq) {
-                        if (lol.simulateNormalAttack()) {
-                            lastNormalAttackSeq = currentNormalAttackSeq;
-                            lastNormalAttackWarnSeq = 0;
-                        } else if (lastNormalAttackWarnSeq != currentNormalAttackSeq) {
-                            lastNormalAttackWarnSeq = currentNormalAttackSeq;
-                            LOG(LOG_LEVEL_WARN, "[TestFunction] 普攻执行失败，等待下一轮重试，请求序号=%llu", (unsigned long long)currentNormalAttackSeq);
-                        }
-                    }
-
                     lol.updateMiniMapData();
                     lol.updateMinionData();
-                    SharedGameData::getInstance().pushData(lol.getMiniMapData());
+                    lol.tickPendingAttack();
+
+                    const auto& miniMapData = lol.getMiniMapData();
+                    processAutoClearMinions(lol, miniMapData, now);
+                    SharedGameData::getInstance().pushData(miniMapData);
 
                     if (now - lastPrint >= std::chrono::milliseconds(kPrintMs)) {
                         lol.printMiniMapData();

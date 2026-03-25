@@ -67,6 +67,16 @@ public:
         return m_battleActive.load(std::memory_order_acquire);
     }
 
+    /** @brief 设置自动清兵开关 */
+    void setAutoClearMinionsEnabled(bool enabled) {
+        m_autoClearMinionsEnabled.store(enabled, std::memory_order_release);
+    }
+
+    /** @brief 查询自动清兵是否开启 */
+    bool isAutoClearMinionsEnabled() const {
+        return m_autoClearMinionsEnabled.load(std::memory_order_acquire);
+    }
+
     /** @brief UI 线程请求触发普攻（单次边沿请求） */
     void requestNormalAttack() {
         m_normalAttackRequestSeq.fetch_add(1, std::memory_order_acq_rel);
@@ -107,6 +117,7 @@ private:
     lol::MiniMapData m_data;
     std::atomic<bool> m_hasNewData{false};
     std::atomic<bool> m_battleActive{false};
+    std::atomic<bool> m_autoClearMinionsEnabled{false};
     std::atomic<bool> m_normalAttackRequested{false};
     std::atomic<uint64_t> m_normalAttackRequestSeq{0};
 };

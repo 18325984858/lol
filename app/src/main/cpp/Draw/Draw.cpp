@@ -61,7 +61,6 @@ ImVec2 GameOverlay::xzToMinimap(float wx, float wz,
 void GameOverlay::drawOverlay(const lol::MiniMapData& data, bool inBattle) {
     if (inBattle) {
         if (m_enableESP)        drawESP(data);
-        if (m_enableWards)      drawWardESP(data);
         if (m_enableRadar)      drawRadar(data);
         if (m_enableSkillRange) drawSkillRange(data);
         if (m_enableMinion)     drawMinionESP(data);
@@ -96,6 +95,16 @@ void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
         }
     }
 
+    ImGui::SameLine();
+    if (ImGui::Button(touch_input::isRotationCorrectionLocked() ? "Corr:ON" : "Corr:OFF", ImVec2(90, 0))) {
+        touch_input::toggleRotationCorrectionLock();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button(touch_input::isSurfaceRotationLockEnabled() ? "Surf:ON" : "Surf:OFF", ImVec2(90, 0))) {
+        touch_input::toggleSurfaceRotationLock();
+    }
+
     if (!inBattle) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "[Waiting]");
@@ -121,14 +130,12 @@ void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
         ImGui::Checkbox("SkillRng",  &m_enableSkillRange);
         ImGui::SameLine();
         ImGui::Checkbox("Minion",    &m_enableMinion);
+        ImGui::SameLine();
+        ImGui::Checkbox("AutoFarm",  &m_enableAutoFarm);
         if (m_enableMinion) {
             ImGui::SliderFloat("LastHit HP", &m_lastHitHpThreshold, 10.0f, 300.0f, "%.0f");
         }
-
-        // ── 普攻模拟按钮 ──
-        if (ImGui::Button("Attack", ImVec2(70, 0))) {
-            SharedGameData::getInstance().requestNormalAttack();
-        }
+        SharedGameData::getInstance().setAutoClearMinionsEnabled(m_enableAutoFarm);
         ImGui::Separator();
 
         // ── 敌方英雄信息 ──
@@ -269,56 +276,35 @@ void GameOverlay::drawESP(const lol::MiniMapData& data) {
                          IM_COL32(200, 200, 200, 220), hpBuf);
     }
 
-    ImGui::End();
-}
+    // ── 眼/守卫 ESP 方框 ──
+        if (m_enableWards) {
+            for (const auto& ward : data.wards) {
+                if (!ward.hasScreenPos) continue;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// drawWardESP — 眼/守卫 ESP 方框（独立于英雄 ESP, 由 Wards 开关控制）
-// ═══════════════════════════════════════════════════════════════════════════════
+                float sx = ward.screenX;
+                float sy = screenH - ward.screenY;
 
-void GameOverlay::drawWardESP(const lol::MiniMapData& data) {
-    if (data.wards.empty()) return;
+                constexpr float kMargin = 100.0f;
+                if (sx < -kMargin || sx > screenW + kMargin ||
+                    sy < -kMargin || sy > screenH + kMargin)
+                    continue;
 
-    ImGuiIO& wIo = ImGui::GetIO();
-    const float screenW = wIo.DisplaySize.x;
-    const float screenH = wIo.DisplaySize.y;
+                const float boxW = 30.0f;
+                const float boxH = 30.0f;
+                ImVec2 boxMin(sx - boxW * 0.5f, sy - boxH * 0.5f);
+                ImVec2 boxMax(sx + boxW * 0.5f, sy + boxH * 0.5f);
 
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2(screenW, screenH));
-    ImGui::Begin("##WardESP", nullptr,
-                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs |
-                 ImGuiWindowFlags_NoSavedSettings);
+                const ImU32 wardColor = IM_COL32(50, 150, 255, 220);
+                espDraw->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 40));
+                espDraw->AddRect(boxMin, boxMax, wardColor, 0.0f, 0, 2.0f);
 
-    auto* dl = ImGui::GetWindowDrawList();
-
-    for (const auto& ward : data.wards) {
-        if (!ward.hasScreenPos) continue;
-
-        float sx = ward.screenX;
-        float sy = screenH - ward.screenY;
-
-        constexpr float kMargin = 100.0f;
-        if (sx < -kMargin || sx > screenW + kMargin ||
-            sy < -kMargin || sy > screenH + kMargin)
-            continue;
-
-        const float boxW = 30.0f;
-        const float boxH = 30.0f;
-        ImVec2 boxMin(sx - boxW * 0.5f, sy - boxH * 0.5f);
-        ImVec2 boxMax(sx + boxW * 0.5f, sy + boxH * 0.5f);
-
-        const ImU32 wardColor = IM_COL32(50, 150, 255, 220);
-        dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 40));
-        dl->AddRect(boxMin, boxMax, wardColor, 0.0f, 0, 2.0f);
-
-        const char* label = "Ward";
-        ImVec2 textSize = ImGui::CalcTextSize(label);
-        float textX = sx - textSize.x * 0.5f;
-        float textY = boxMin.y - textSize.y - 1.0f;
-        dl->AddText(ImVec2(textX + 1, textY + 1), IM_COL32(0, 0, 0, 200), label);
-        dl->AddText(ImVec2(textX, textY), IM_COL32(100, 200, 255, 240), label);
+                const char* label = "Ward";
+                ImVec2 textSize = ImGui::CalcTextSize(label);
+                float textX = sx - textSize.x * 0.5f;
+                float textY = boxMin.y - textSize.y - 1.0f;
+                espDraw->AddText(ImVec2(textX + 1, textY + 1), IM_COL32(0, 0, 0, 200), label);
+                espDraw->AddText(ImVec2(textX, textY), IM_COL32(100, 200, 255, 240), label);
+            }
     }
 
     ImGui::End();
@@ -538,25 +524,57 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
 
 void GameOverlay::drawSkillRange(const lol::MiniMapData& data) {
     ImGuiIO& io = ImGui::GetIO();
+    const float screenW = io.DisplaySize.x;
     const float screenH = io.DisplaySize.y;
     auto* dl = ImGui::GetForegroundDrawList();
 
-    if (data.mySkillRange <= 0.0f || !data.hasMyScreenPos || data.mySkillRangeScreenPoints.size() < 8) {
-        return;
+    auto drawProjectedRing = [&](const std::vector<lol::ScreenPoint>& points,
+                                 ImU32 lineColor,
+                                 ImU32 fillColor) {
+        if (points.size() < 8) return;
+
+        std::vector<ImVec2> projectedPoints;
+        projectedPoints.reserve(points.size());
+        for (const auto& point : points) {
+            projectedPoints.emplace_back(point.x, screenH - point.y);
+        }
+
+        dl->AddConvexPolyFilled(projectedPoints.data(), (int)projectedPoints.size(), fillColor);
+        dl->AddPolyline(projectedPoints.data(), (int)projectedPoints.size(), lineColor, ImDrawFlags_Closed, 1.8f);
+    };
+
+    for (const auto& hero : data.enemyHeroes) {
+        const bool isMyTeam = (hero.iconType == lol::MiniMapIconType_MyTeamHero);
+        if (isMyTeam || hero.atkRange <= 0.0f || !hero.hasScreenPos) continue;
+
+        if (hero.screenX < 0.0f || hero.screenX > screenW ||
+            hero.screenY < 0.0f || hero.screenY > screenH) {
+            continue;
+        }
+
+        // 敌方英雄: 简化为屏幕空间圆（无 Camera 访问，无法精确投影）
+        const float screenRadius = hero.atkRange * 18.0f; // 粗略像素缩放
+        ImVec2 center(hero.screenX, screenH - hero.screenY);
+        dl->AddCircle(center, screenRadius, IM_COL32(255, 80, 80, 95), 40, 1.8f);
+        dl->AddCircleFilled(center, screenRadius, IM_COL32(255, 60, 60, 14), 40);
+
+        char enemyLabel[48];
+        snprintf(enemyLabel, sizeof(enemyLabel), "%s %.1f",
+                 hero.heroName.empty() ? "Enemy" : hero.heroName.c_str(),
+                 hero.atkRange);
+        dl->AddText(ImVec2(hero.screenX + 10.0f, screenH - hero.screenY - 18.0f),
+                    IM_COL32(255, 120, 120, 235), enemyLabel);
     }
 
-    std::vector<ImVec2> projectedPoints;
-    projectedPoints.reserve(data.mySkillRangeScreenPoints.size());
-    for (const auto& point : data.mySkillRangeScreenPoints) {
-        projectedPoints.emplace_back(point.x, screenH - point.y);
+    if (data.mySkillRange <= 0.0f || !data.hasMyScreenPos || data.mySkillRangeScreenPoints.size() < 8) {
+        return;
     }
 
     const ImU32 circleColor = IM_COL32(0, 255, 100, 90);
     const ImU32 fillColor   = IM_COL32(0, 255, 100, 18);
     const ImU32 textColor   = IM_COL32(0, 255, 100, 220);
 
-    dl->AddConvexPolyFilled(projectedPoints.data(), (int)projectedPoints.size(), fillColor);
-    dl->AddPolyline(projectedPoints.data(), (int)projectedPoints.size(), circleColor, ImDrawFlags_Closed, 1.8f);
+    drawProjectedRing(data.mySkillRangeScreenPoints, circleColor, fillColor);
 
     char label[32];
     snprintf(label, sizeof(label), "%.1f", data.mySkillRange);
