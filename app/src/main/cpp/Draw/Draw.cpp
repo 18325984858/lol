@@ -138,6 +138,56 @@ void GameOverlay::drawInfoPanel(const lol::MiniMapData& data, bool inBattle) {
         SharedGameData::getInstance().setAutoClearMinionsEnabled(m_enableAutoFarm);
         ImGui::Separator();
 
+        // ── 弹道/地形专属面板开关 ──
+        ImGui::TextUnformatted("Overlay Panels");
+        ImGui::Spacing();
+
+        const float panelGap = 8.0f;
+        const float contentWidth = ImGui::GetContentRegionAvail().x;
+        const float panelWidth = std::max(220.0f, contentWidth);
+        const ImVec2 panelSize(panelWidth, 86.0f);
+
+        auto drawTogglePanel = [&](const char* panelId,
+                                   const char* title,
+                                   const char* desc,
+                                   bool& enabled,
+                                   const ImVec4& accent) {
+            ImGui::BeginChild(panelId, panelSize, true, ImGuiWindowFlags_NoScrollbar);
+            ImGui::TextColored(accent, "%s", title);
+            ImGui::TextWrapped("%s", desc);
+            ImGui::Spacing();
+
+            ImVec4 buttonColor = enabled ? ImVec4(accent.x, accent.y, accent.z, 0.90f)
+                                         : ImVec4(0.18f, 0.18f, 0.18f, 1.0f);
+            ImVec4 buttonHover = enabled ? ImVec4(accent.x + 0.10f, accent.y + 0.10f, accent.z + 0.10f, 1.0f)
+                                         : ImVec4(0.28f, 0.28f, 0.28f, 1.0f);
+            ImVec4 buttonActive = enabled ? ImVec4(accent.x + 0.05f, accent.y + 0.05f, accent.z + 0.05f, 1.0f)
+                                          : ImVec4(0.22f, 0.22f, 0.22f, 1.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, buttonHover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, buttonActive);
+            const char* buttonLabel = enabled ? "Disable" : "Enable";
+            if (ImGui::Button(buttonLabel, ImVec2(-1, 0))) {
+                enabled = !enabled;
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::TextColored(enabled ? ImVec4(0.35f, 1.0f, 0.45f, 1.0f)
+                                       : ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                               enabled ? "Active" : "Disabled");
+            ImGui::EndChild();
+        };
+
+        drawTogglePanel("##TerrainOverlayPanel",
+                        "Terrain Overlay",
+                        "Draw navigation boundary, obstacle polygons, and grass polygons.",
+                        m_enableTerrainOverlay,
+                        ImVec4(0.35f, 0.82f, 0.55f, 1.0f));
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
         // ── 敌方英雄信息 ──
         if (m_enableHeroInfo && ImGui::CollapsingHeader("Enemy Heroes", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Text("Count: %d", (int)data.enemyHeroes.size());
@@ -412,6 +462,10 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
         dl->AddCircle(rb, baseR, IM_COL32(255,80,80,220), 16, 1.5f);
     }
 
+    if (m_enableTerrainOverlay) {
+        drawTerrainOverlay(dl, O, radarSize, m_radarRotation);
+    }
+
     // ── 大龙/小龙 ──
     {
         float pitR = radarSize * 0.012f;
@@ -516,6 +570,43 @@ void GameOverlay::drawRadar(const lol::MiniMapData& data) {
 
     ImGui::End();
     ImGui::PopStyleVar(2);
+}
+
+void GameOverlay::drawTerrainOverlay(ImDrawList* dl, ImVec2 origin, float size, int rot) {
+    const auto terrain = SharedGameData::getInstance().getLatestTerrainData();
+
+    auto mapPolygon = [&](const std::vector<lol::UnityVector3>& points) {
+        std::vector<ImVec2> result;
+        result.reserve(points.size());
+        for (const auto& point : points) {
+            if (!std::isfinite(point.x) || !std::isfinite(point.z)) {
+                continue;
+            }
+            result.push_back(xzToMinimap(point.x, point.z, origin, size, rot));
+        }
+        return result;
+    };
+
+    auto drawPolygonSet = [&](const std::vector<lol::TerrainPolygon>& polygons,
+                              ImU32 lineColor,
+                              float lineWidth) {
+        for (const auto& polygon : polygons) {
+            if (polygon.points.size() < 2) continue;
+            auto mapped = mapPolygon(polygon.points);
+            if (mapped.size() < 2) continue;
+            dl->AddPolyline(mapped.data(), (int)mapped.size(), lineColor, ImDrawFlags_Closed, lineWidth);
+        }
+    };
+
+    if (!terrain.boundPolygon.points.empty()) {
+        auto mapped = mapPolygon(terrain.boundPolygon.points);
+        if (mapped.size() >= 2) {
+            dl->AddPolyline(mapped.data(), (int)mapped.size(), IM_COL32(255, 230, 120, 200), ImDrawFlags_Closed, 2.2f);
+        }
+    }
+
+    drawPolygonSet(terrain.obstaclePolygons, IM_COL32(255, 80, 80, 160), 1.6f);
+    drawPolygonSet(terrain.grassPolygons, IM_COL32(90, 190, 90, 120), 1.2f);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

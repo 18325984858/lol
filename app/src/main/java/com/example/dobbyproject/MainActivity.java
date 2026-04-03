@@ -107,8 +107,6 @@ public class MainActivity extends AppCompatActivity {
         tv.setText(stringFromJNI());
         tvStatus = findViewById(R.id.tv_status);
 
-        CheckBox cbDumper = findViewById(R.id.cb_dumper);
-        CheckBox cbHeader = findViewById(R.id.cb_header);
         CheckBox cbLog = findViewById(R.id.cb_log);
 
         Button btnSelinux = findViewById(R.id.btn_selinux);
@@ -212,88 +210,19 @@ public class MainActivity extends AppCompatActivity {
             btnLaunch.setEnabled(false);
             launchDone = true;
 
-            boolean enableDumper = cbDumper.isChecked();
-            boolean enableHeader = cbHeader.isChecked();
             boolean enableLog = cbLog.isChecked();
 
-            // 清除旧的完成标记
-            clearDumpMarkers();
-
             writeFiletoTargetProgram();
-            launchAndInject(enableDumper, enableHeader, enableLog);
+            launchAndInject(enableLog);
 
-            // 如果勾选了 dump，启动后台轮询等待完成
-            if (enableDumper || enableHeader) {
-                pollDumpCompletion(enableDumper, enableHeader);
-            }
-
-            String options = "";
-            if (enableDumper) options += " [Dumper]";
-            if (enableHeader) options += " [Header]";
-            btnLaunch.setText("✅ 游戏已启动" + options);
-            updateStatus("游戏启动中..." + options);
-            Toast.makeText(this, "正在启动游戏并注入..." + options, Toast.LENGTH_SHORT).show();
+            btnLaunch.setText("✅ 游戏已启动");
+            updateStatus("游戏启动中...");
+            Toast.makeText(this, "正在启动游戏并注入...", Toast.LENGTH_SHORT).show();
         });
     }
 
     private void updateStatus(String msg) {
         if (tvStatus != null) tvStatus.setText(msg);
-    }
-
-    /**
-     * 清除旧的 dump 完成标记文件
-     */
-    private void clearDumpMarkers() {
-        try {
-            Process p = Runtime.getRuntime().exec("su");
-            DataOutputStream os = new DataOutputStream(p.getOutputStream());
-            os.writeBytes("rm -f /data/local/tmp/dobby_dumper_done /data/local/tmp/dobby_header_done\n");
-            os.writeBytes("exit\n");
-            os.flush();
-            p.waitFor();
-        } catch (Exception ignored) {}
-    }
-
-    /**
-     * 后台轮询 dump 完成标记文件，完成后在 UI 线程弹 Toast
-     */
-    private void pollDumpCompletion(boolean waitDumper, boolean waitHeader) {
-        new Thread(() -> {
-            boolean dumperDone = !waitDumper;
-            boolean headerDone = !waitHeader;
-            int maxWait = 300; // 最多等 5 分钟 (300 × 1s)
-
-            for (int i = 0; i < maxWait && (!dumperDone || !headerDone); i++) {
-                try { Thread.sleep(1000); } catch (InterruptedException ignored) { return; }
-
-                if (!dumperDone) {
-                    dumperDone = checkFileExists("/data/local/tmp/dobby_dumper_done");
-                    if (dumperDone) {
-                        runOnUiThread(() -> {
-                            Toast.makeText(this, "✓ il2cppDumper 导出完成！", Toast.LENGTH_LONG).show();
-                            updateStatus("Dumper 导出完成 ✓");
-                        });
-                    }
-                }
-                if (!headerDone) {
-                    headerDone = checkFileExists("/data/local/tmp/dobby_header_done");
-                    if (headerDone) {
-                        runOnUiThread(() -> {
-                            Toast.makeText(this, "✓ il2cppHeader 导出完成！", Toast.LENGTH_LONG).show();
-                            updateStatus("Header 导出完成 ✓");
-                        });
-                    }
-                }
-            }
-
-            if (dumperDone && headerDone) {
-                runOnUiThread(() -> {
-                    String msg = "全部导出完成 ✓";
-                    updateStatus(msg);
-                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
-                });
-            }
-        }).start();
     }
 
     private boolean checkFileExists(String path) {
@@ -562,7 +491,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public void launchAndInject(boolean enableDumper, boolean enableHeader, boolean enableLog) {
+    public void launchAndInject(boolean enableLog) {
         String soPath = "/data/data/" + g_packFileName + "/files/libdobbyproject.so";
         String injectorSrc = g_nativeLibPath + (g_nativeLibPath.endsWith("/") ? "" : "/") + "libinjector.so";
         String injectorDst = "/data/local/tmp/injector";
@@ -729,19 +658,19 @@ public class MainActivity extends AppCompatActivity {
             // 通过 su 执行 injector (root 权限, 可以 ptrace)
             LogUtil.i("[注入流程] 以 root 身份执行 injector...");
 
-            // 写入配置文件，告知 C++ 层是否启用 Dumper/Header
+            // 写入配置文件，告知 C++ 层配置
             try {
                 Process cfgP = Runtime.getRuntime().exec("su");
                 DataOutputStream cfgOs = new DataOutputStream(cfgP.getOutputStream());
-                String cfgContent = "dumper=" + (enableDumper ? "1" : "0") + "\n"
-                                  + "header=" + (enableHeader ? "1" : "0") + "\n"
+                String cfgContent = "dumper=0\n"
+                                  + "header=0\n"
                                   + "log=" + (enableLog ? "1" : "0") + "\n";
                 cfgOs.writeBytes("echo '" + cfgContent + "' > /data/local/tmp/dobby_config.txt\n");
                 cfgOs.writeBytes("chmod 644 /data/local/tmp/dobby_config.txt\n");
                 cfgOs.writeBytes("exit\n");
                 cfgOs.flush();
                 cfgP.waitFor();
-                LogUtil.i("[注入流程] 配置文件已写入: dumper=" + enableDumper + " header=" + enableHeader);
+                LogUtil.i("[注入流程] 配置文件已写入");
             } catch (Exception e) {
                 LogUtil.e("[注入流程] 写入配置文件异常: " + e.getMessage(), e);
             }

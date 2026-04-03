@@ -5,8 +5,6 @@
 #include "start.h"
 #include "./Log/log.h"
 #include "./lol/lolm.h"
-#include "./il2cppHeader/il2cppHeader.h"
-#include "./li2cppDumper/li2cppdumper.h"
 #include "Draw/Draw.h"
 #include <chrono>
 #include <thread>
@@ -1249,7 +1247,6 @@ AutoClearTargetSet selectAutoClearTargets(const lol::MiniMapData& data) {
             }
         }
     }
-
     return result;
 }
 
@@ -1383,20 +1380,21 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
                  pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
     LOG(LOG_LEVEL_INFO, "[TestFunction] 游戏数据采集初始化完成 ✓");
 
-    constexpr int kCollectMs = 50;
+    constexpr int kCollectMs     = 50;   // 常规采集间隔
     constexpr int kPrintMs   = 5000;
     auto lastCollect = std::chrono::steady_clock::now();
     auto lastPrint   = lastCollect;
+    static bool terrainLoaded = false;
 
     while (true) {
         auto now = std::chrono::steady_clock::now();
-        if (now - lastCollect >= std::chrono::milliseconds(kCollectMs)) {
+        int collectInterval = kCollectMs;
+        if (now - lastCollect >= std::chrono::milliseconds(collectInterval)) {
 
             int crashSig = sigsetjmp(t_jumpBuf, 1);
             if (crashSig != 0) {
                 LOG(LOG_LEVEL_ERROR, "[TestFunction] ⚠ 捕获信号 %d，跳过本次采集", crashSig);
                 t_guardActive = 0;
-                // 崩溃时不改变状态，保留上一帧数据，避免闪烁
             } else {
                 t_guardActive = 1;
                 bool isBattle = lol.get_BattleStarted();
@@ -1404,16 +1402,27 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
                 if (isBattle) {
                     lol.updateMiniMapData();
                     lol.updateMinionData();
+                    if (!terrainLoaded) {
+                        terrainLoaded = lol.updateTerrainData();
+                        LOG(LOG_LEVEL_INFO, "[Terrain] terrainLoaded=%d", terrainLoaded ? 1 : 0);
+                    }
+
                     lol.tickPendingAttack();
 
                     const auto& miniMapData = lol.getMiniMapData();
+
+                    SharedGameData::getInstance().pushTerrainData(lol.getTerrainData());
+
                     processAutoClearMinions(lol, miniMapData, now);
+
                     SharedGameData::getInstance().pushData(miniMapData);
 
                     if (now - lastPrint >= std::chrono::milliseconds(kPrintMs)) {
                         lol.printMiniMapData();
                         lastPrint = now;
                     }
+                } else {
+                    terrainLoaded = false;
                 }
                 t_guardActive = 0;
             }
@@ -1429,8 +1438,6 @@ static void TestFunction(void *pli2cppModeBase, void *pCodeRegistration,
 // ═══════════════════════════════════════════════════════════════════════════════
 
 struct DobbyConfig {
-    bool enableDumper = false;
-    bool enableHeader = false;
     bool enableLog = true;
 };
 
@@ -1443,12 +1450,10 @@ static DobbyConfig readDobbyConfig() {
     close(fd);
     if (n <= 0) return cfg;
     buf[n] = '\0';
-    if (strstr(buf, "dumper=1")) cfg.enableDumper = true;
-    if (strstr(buf, "header=1")) cfg.enableHeader = true;
     if (strstr(buf, "log=0")) cfg.enableLog = false;
     // 应用日志开关
     g_runtimeLogEnabled = cfg.enableLog;
-    LOG(LOG_LEVEL_INFO, "[Config] dumper=%d header=%d log=%d", cfg.enableDumper ? 1 : 0, cfg.enableHeader ? 1 : 0, cfg.enableLog ? 1 : 0);
+    LOG(LOG_LEVEL_INFO, "[Config] log=%d", cfg.enableLog ? 1 : 0);
     return cfg;
 }
 
@@ -1469,32 +1474,6 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
 
         // 读取配置
         DobbyConfig config = readDobbyConfig();
-
-        // 按配置在独立线程中执行 Dumper / Header（不阻塞主注入流程）
-        if (config.enableHeader) {
-            std::thread([=]() {
-                LOG(LOG_LEVEL_INFO, "[MyStartPoint] [线程] 启用 il2cppHeader — 导出头文件");
-                li2cppHeader::li2cppHeader il2cppH(pli2cppModeBase, pCodeRegistration,
-                                                   pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
-                il2cppH.start();
-                LOG(LOG_LEVEL_INFO, "[MyStartPoint] [线程] il2cppHeader 完成");
-                // 写入完成标记
-                int fd = open("/data/local/tmp/dobby_header_done", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd >= 0) { write(fd, "done", 4); close(fd); }
-            }).detach();
-        }
-        if (config.enableDumper) {
-            std::thread([=]() {
-                LOG(LOG_LEVEL_INFO, "[MyStartPoint] [线程] 启用 il2cppDumper — 导出 dump");
-                li2cpp::li2cppDumper il2cppD(pli2cppModeBase, pCodeRegistration,
-                                             pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
-                il2cppD.initInfo();
-                LOG(LOG_LEVEL_INFO, "[MyStartPoint] [线程] il2cppDumper 完成");
-                // 写入完成标记
-                int fd = open("/data/local/tmp/dobby_dumper_done", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd >= 0) { write(fd, "done", 4); close(fd); }
-            }).detach();
-        }
 
         std::thread(GuiNativeThread).detach();
 
@@ -1517,18 +1496,4 @@ bool MyStartPoint(void *pli2cppModeBase, void *pCodeRegistration, void *pMetadat
         return false;
     }
 }
-
-
-
-/*
-
-  li2cppHeader::li2cppHeader il2cpp1(pli2cppModeBase, pCodeRegistration,
-                                     pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
-            il2cpp1.start();
-
-           li2cpp::li2cppDumper il2cpp2(pli2cppModeBase, pCodeRegistration,
-                                     pMetadataRegistration, pGlobalMetadataHeader, pMetadataImagesTable);
-            il2cpp2.initInfo();
-
-*/
            

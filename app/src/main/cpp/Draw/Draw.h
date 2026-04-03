@@ -32,6 +32,8 @@ namespace draw {
         bool m_enableSkillRange = false;
         bool m_enableMinion  = false;
         bool m_enableAutoFarm = false;
+        bool m_enableBulletOverlay = false;
+        bool m_enableTerrainOverlay = true;
         float m_lastHitHpThreshold = 120.0f;
         int  m_radarRotation = 0;
 
@@ -48,6 +50,7 @@ namespace draw {
         void drawRadar(const lol::MiniMapData& data);
         void drawSkillRange(const lol::MiniMapData& data);
         void drawMinionESP(const lol::MiniMapData& data);
+        void drawTerrainOverlay(ImDrawList* dl, ImVec2 origin, float size, int rot);
     };
 
 } // namespace draw

@@ -17,8 +17,14 @@
 #include <stdint.h>
 #include <map>
 #include <vector>
+#include <cstring>
+#include <sstream>
+#include <utility>
+#include <type_traits>
+#include <typeinfo>
 #include "LolHeader.h"
 #include "../interface/interface.h"
+#include "../Log/log.h"
 
 struct Il2CppGlobalMetadataHeader;
 
@@ -46,6 +52,7 @@ namespace lol {
         UnityVector3 worldPos;      ///< 世界坐标
         bool        hasWorldPos;    ///< 坐标是否有效
         int32_t     heroResId;      ///< 英雄配置 ID（_resId）
+        uint32_t    objId;          ///< 当前英雄实例对象 ID
         std::string heroName;       ///< 英雄名称（从 BattleActor_DC.name 读取）
         std::string summonerName;   ///< 召唤师名（BattlePlayer.get_name）
         float       screenX;        ///< 屏幕坐标 X（Unity 屏幕空间，原点左下）
@@ -106,6 +113,63 @@ namespace lol {
         }
     };
 
+    /** @brief DataShellList 遍历后的一项结果数据 */
+    struct DataShellListEntry {
+        uint32_t index = 0;            ///< 元素下标
+        std::string listTypeName;      ///< DataShellList 运行时类型名
+        std::string itemTypeName;      ///< 元素类型名
+        std::string valueText;         ///< 元素的字符串表示
+        std::vector<uint8_t> rawBytes; ///< 元素原始字节
+        void* objectPtr = nullptr;     ///< 元素对象指针（仅引用类型有效）
+    };
+
+    /** @brief FixVector2_Fix64 原始数据 */
+    struct FixVector2Raw {
+        int64_t x = 0;
+        int64_t y = 0;
+    };
+
+    /** @brief 技能弹道数据快照 */
+    struct BulletInfo {
+        uint32_t objId = 0;
+        int32_t resId = 0;
+        int32_t trajectoryType = -1;
+        int32_t bulletTargetType = -1;
+        bool isFinish = false;
+        float currentSpeed = -1.0f;
+        float distanceLimit = -1.0f;
+        float speedScale = -1.0f;
+        UnityVector3 initialPoint{};
+        UnityVector3 startMovePosition{};
+        UnityVector3 targetPosition{};
+        UnityVector3 lastTickPosition{};
+        UnityVector3 velocity{};
+        void* caster = nullptr;
+        void* targetActor = nullptr;
+        int32_t targetActorOffset = -1;
+        std::string bulletTypeName;
+    };
+
+    /** @brief 碰撞多边形数据 */
+    struct TerrainPolygon {
+        std::string polygonType;
+        std::vector<UnityVector3> points;
+    };
+
+    /** @brief 地形碰撞快照 */
+    struct TerrainData {
+        std::vector<TerrainPolygon> obstaclePolygons;
+        std::vector<TerrainPolygon> grassPolygons;
+        TerrainPolygon boundPolygon;
+
+        void clear() {
+            obstaclePolygons.clear();
+            grassPolygons.clear();
+            boundPolygon.polygonType.clear();
+            boundPolygon.points.clear();
+        }
+    };
+
     /**
      * @struct  LolStrStruct
      * @brief   加密字符串缓存结构 —— 存储解密状态和原始字符串
@@ -149,8 +213,425 @@ namespace lol {
         /** @brief 遍历 miniIcons 字典，收集小兵数据到 m_miniMapData.minions */
         void updateMinionData();
 
+        /** @brief 遍历当前战斗中的技能弹道，收集到 m_bulletData */
+        void updateBulletData();
+
+        /** @brief 遍历当前战斗地图的地形碰撞多边形，收集到 m_terrainData */
+        bool updateTerrainData();
+
+            /**
+             * @brief  遍历 DataShellList，并将每个元素的数据与类型信息保存到动态数组中
+             * @tparam  T  DataShellList 元素类型；必须与目标 list 的真实元素类型一致
+             * @param   pDataShellList  DataShellList 实例指针
+             * @return  遍历结果动态数组，失败返回空 vector
+             */
+            template<typename T>
+            std::vector<DataShellListEntry> collectDataShellList(void* pDataShellList) {
+                std::vector<DataShellListEntry> result;
+                if (pDataShellList == nullptr || m_pfunctionInfo == nullptr) {
+                    LOG(LOG_LEVEL_WARN, "[Bullet] collectDataShellList: input=%p functionInfo=%p", pDataShellList, m_pfunctionInfo.get());
+                    return result;
+                }
+
+                auto* listKlass = GetObjectKlass(pDataShellList);
+                if (listKlass == nullptr) {
+                    LOG(LOG_LEVEL_WARN, "[Bullet] collectDataShellList: GetObjectKlass failed, list=%p", pDataShellList);
+                    return result;
+                }
+
+                LOG(LOG_LEVEL_INFO, "[Bullet] collectDataShellList: list=%p klass=%p", pDataShellList, listKlass);
+
+                const uint64_t getCountAddr = m_pfunctionInfo->GetMethodFunByClass(listKlass, "get_Count", 0);
+                const uint64_t getItemAddr = m_pfunctionInfo->GetMethodFunByClass(listKlass, "get_Item", 1);
+                if (getCountAddr == 0 || getItemAddr == 0) {
+                    LOG(LOG_LEVEL_WARN, "[Bullet] collectDataShellList: method resolve failed count=%p item=%p",
+                        reinterpret_cast<void*>(getCountAddr), reinterpret_cast<void*>(getItemAddr));
+                    return result;
+                }
+
+                LOG(LOG_LEVEL_INFO, "[Bullet] collectDataShellList: get_Count=%p get_Item=%p",
+                    reinterpret_cast<void*>(getCountAddr), reinterpret_cast<void*>(getItemAddr));
+
+                const auto shellFields = ReadMemberValue<FrameEngine_DataShellList_T1_T2_T3_T4_Fields>(
+                        pDataShellList, static_cast<uint32_t>(sizeof(void*) * 2));
+                void* backingList = reinterpret_cast<void*>(shellFields.list);
+                LOG(LOG_LEVEL_INFO, "[Bullet] collectDataShellList: backing list=%p", backingList);
+
+                const ::MethodInfo* countMethod = nullptr;
+                const ::MethodInfo* itemMethod = nullptr;
+                void* iter = nullptr;
+                while (auto* method = m_pfunctionInfo->il2cpp_class_get_methods(listKlass, &iter)) {
+                    const char* methodName = m_pfunctionInfo->il2cpp_method_get_name(method);
+                    if (!methodName) {
+                        continue;
+                    }
+
+                    if (!countMethod && strcmp(methodName, "get_Count") == 0 &&
+                        m_pfunctionInfo->il2cpp_method_get_param_count(method) == 0) {
+                        countMethod = method;
+                    } else if (!itemMethod && strcmp(methodName, "get_Item") == 0 &&
+                               m_pfunctionInfo->il2cpp_method_get_param_count(method) == 1) {
+                        itemMethod = method;
+                    }
+
+                    if (countMethod && itemMethod) {
+                        break;
+                    }
+                }
+
+                if (!countMethod || !itemMethod) {
+                    LOG(LOG_LEVEL_WARN, "[Bullet] collectDataShellList: MethodInfo resolve failed count=%p item=%p",
+                        (void*)countMethod, (void*)itemMethod);
+                    return result;
+                }
+
+                LOG(LOG_LEVEL_INFO, "[Bullet] collectDataShellList: countMethod=%p itemMethod=%p",
+                    (void*)countMethod, (void*)itemMethod);
+
+                ::Il2CppException* invokeException = nullptr;
+                ::Il2CppObject* countObject = m_pfunctionInfo->il2cpp_runtime_invoke(countMethod, pDataShellList, nullptr, &invokeException);
+                if (invokeException != nullptr || countObject == nullptr) {
+                    LOG(LOG_LEVEL_WARN, "[Bullet] collectDataShellList: count invoke failed object=%p exc=%p", countObject, invokeException);
+                    return result;
+                }
+
+                int32_t count = 0;
+                std::memcpy(&count,
+                            reinterpret_cast<uint8_t*>(countObject) + sizeof(Il2CppObject),
+                            sizeof(int32_t));
+                if (count <= 0) {
+                    LOG(LOG_LEVEL_WARN, "[Bullet] collectDataShellList: count=%d backingList=%p", count, backingList);
+                    return result;
+                }
+
+                LOG(LOG_LEVEL_INFO, "[Bullet] collectDataShellList: count=%d", count);
+
+                result.reserve(static_cast<size_t>(count));
+                const std::string listTypeName = getManagedTypeName(pDataShellList);
+
+                for (int32_t i = 0; i < count; ++i) {
+                    invokeException = nullptr;
+                    void* itemArgs[1] = { &i };
+                    ::Il2CppObject* itemObject = m_pfunctionInfo->il2cpp_runtime_invoke(itemMethod, pDataShellList, itemArgs, &invokeException);
+                    if (invokeException != nullptr || itemObject == nullptr) {
+                        LOG(LOG_LEVEL_WARN, "[Bullet] collectDataShellList: item invoke failed index=%d object=%p exc=%p",
+                            i, itemObject, invokeException);
+                        continue;
+                    }
+
+                    T item{};
+                    if constexpr (std::is_pointer_v<T>) {
+                        item = reinterpret_cast<T>(itemObject);
+                    } else {
+                        std::memcpy(&item,
+                                    reinterpret_cast<uint8_t*>(itemObject) + sizeof(Il2CppObject),
+                                    sizeof(T));
+                    }
+
+                    DataShellListEntry entry;
+                    entry.index = static_cast<uint32_t>(i);
+                    entry.listTypeName = listTypeName;
+                    entry.rawBytes = packDataShellValue(item);
+                    entry.valueText = formatDataShellValue(item);
+
+                    if constexpr (std::is_pointer_v<T>) {
+                        entry.objectPtr = reinterpret_cast<void*>(item);
+                        if (entry.objectPtr != nullptr) {
+                            entry.itemTypeName = getManagedTypeName(entry.objectPtr);
+                        } else {
+                            entry.itemTypeName = "<null>";
+                        }
+                    } else {
+                        entry.itemTypeName = getCppTypeName<T>();
+                    }
+
+                    result.push_back(std::move(entry));
+                }
+
+                return result;
+            }
+
+        /**
+         * @brief  遍历 LGameVector / 兼容 get_Count/get_Item 的容器，并返回元素类型化数组
+         * @tparam  T  元素类型
+         * @param   pVector  容器实例指针
+         * @param   logTag   日志前缀标签，默认使用 [Bullet]
+         * @return  采集到的元素数组，失败返回空 vector
+         */
+        template<typename T>
+        std::vector<T> collectLGameVector(void* pVector, const char* logTag = "[Bullet]") {
+            std::vector<T> result;
+            if (pVector == nullptr || m_pfunctionInfo == nullptr) {
+                LOG(LOG_LEVEL_WARN, "%s collectLGameVector: input=%p functionInfo=%p", logTag, pVector, m_pfunctionInfo.get());
+                return result;
+            }
+
+            auto* vectorKlass = GetObjectKlass(pVector);
+            if (vectorKlass == nullptr) {
+                LOG(LOG_LEVEL_WARN, "%s collectLGameVector: GetObjectKlass failed, vector=%p", logTag, pVector);
+                return result;
+            }
+
+            LOG(LOG_LEVEL_INFO, "%s collectLGameVector: vector=%p klass=%p", logTag, pVector, vectorKlass);
+
+            m_pfunctionInfo->il2cpp_runtime_class_init(vectorKlass);
+            m_pfunctionInfo->il2cpp_class_init_all_method(vectorKlass);
+
+            struct CountCandidate {
+                const ::MethodInfo* method = nullptr;
+                const char* name = nullptr;
+                int priority = 100;
+            };
+
+            const ::MethodInfo* countMethod = nullptr;
+            const ::MethodInfo* itemMethod = nullptr;
+            const char* countMethodName = nullptr;
+            const char* itemMethodName = nullptr;
+            std::vector<CountCandidate> countCandidates;
+
+            auto addCountCandidate = [&](const ::MethodInfo* method, const char* methodName, int priority) {
+                if (method == nullptr || methodName == nullptr || priority >= 100) {
+                    return;
+                }
+                for (const auto& candidate : countCandidates) {
+                    if (candidate.method == method) {
+                        return;
+                    }
+                }
+                countCandidates.push_back(CountCandidate{ method, methodName, priority });
+            };
+
+            for (auto* current = vectorKlass; current != nullptr; current = m_pfunctionInfo->il2cpp_class_get_parent(current)) {
+                m_pfunctionInfo->il2cpp_runtime_class_init(current);
+                m_pfunctionInfo->il2cpp_class_init_all_method(current);
+
+                const ::MethodInfo* localCountMethod = nullptr;
+                const char* localCountMethodName = nullptr;
+                int localCountPriority = 100;
+                const ::MethodInfo* localItemMethod = nullptr;
+                const char* localItemMethodName = nullptr;
+                const ::MethodInfo* localPtrItemMethod = nullptr;
+                const char* localPtrItemMethodName = nullptr;
+
+                void* iter = nullptr;
+                while (auto* method = m_pfunctionInfo->il2cpp_class_get_methods(current, &iter)) {
+                    const char* methodName = m_pfunctionInfo->il2cpp_method_get_name(method);
+                    if (methodName == nullptr) {
+                        continue;
+                    }
+
+                    const uint32_t paramCount = m_pfunctionInfo->il2cpp_method_get_param_count(method);
+                    if (paramCount == 0) {
+                        int candidatePriority = 100;
+                        if (strcmp(methodName, "get_Count") == 0) {
+                            candidatePriority = 0;
+                        } else if (strcmp(methodName, "GetCount") == 0) {
+                            candidatePriority = 1;
+                        } else if (strcmp(methodName, "get_Length") == 0) {
+                            candidatePriority = 2;
+                        }
+
+                        if (candidatePriority < localCountPriority) {
+                            localCountMethod = method;
+                            localCountMethodName = methodName;
+                            localCountPriority = candidatePriority;
+                        }
+
+                        addCountCandidate(method, methodName, candidatePriority);
+                    } else if (paramCount == 1) {
+                        if (strcmp(methodName, "get_Item") == 0 || strcmp(methodName, "GetElementByIndex") == 0) {
+                            if (localItemMethod == nullptr || strcmp(methodName, "get_Item") == 0) {
+                                localItemMethod = method;
+                                localItemMethodName = methodName;
+                            }
+                        } else if (strcmp(methodName, "GetPtrByIndex") == 0 && localPtrItemMethod == nullptr) {
+                            localPtrItemMethod = method;
+                            localPtrItemMethodName = methodName;
+                        }
+                    }
+                }
+
+                if (countMethod == nullptr && localCountMethod != nullptr) {
+                    countMethod = localCountMethod;
+                    countMethodName = localCountMethodName;
+                }
+
+                if (itemMethod == nullptr) {
+                    if (localItemMethod != nullptr) {
+                        itemMethod = localItemMethod;
+                        itemMethodName = localItemMethodName;
+                    } else if (localPtrItemMethod != nullptr) {
+                        itemMethod = localPtrItemMethod;
+                        itemMethodName = localPtrItemMethodName;
+                    }
+                }
+
+            }
+
+            std::sort(countCandidates.begin(), countCandidates.end(), [](const CountCandidate& lhs, const CountCandidate& rhs) {
+                return lhs.priority < rhs.priority;
+            });
+
+            if (countMethod == nullptr && !countCandidates.empty()) {
+                countMethod = countCandidates.front().method;
+                countMethodName = countCandidates.front().name;
+            }
+
+            LOG(LOG_LEVEL_INFO, "%s collectLGameVector: countMethod=%p(%s) itemMethod=%p(%s)",
+                logTag,
+                (void*)countMethod,
+                countMethodName ? countMethodName : "<null>",
+                (void*)itemMethod,
+                itemMethodName ? itemMethodName : "<null>");
+
+            if (countMethod == nullptr || itemMethod == nullptr) {
+                LOG(LOG_LEVEL_WARN, "%s collectLGameVector: method resolve failed", logTag);
+                return result;
+            }
+
+            const ::Il2CppType* itemReturnType = m_pfunctionInfo->il2cpp_method_get_return_type(itemMethod);
+            const char* itemReturnTypeName = itemReturnType ? m_pfunctionInfo->il2cpp_type_get_name(itemReturnType) : nullptr;
+            const std::string itemReturnTypeText = itemReturnTypeName ? itemReturnTypeName : "";
+            const bool itemReturnsBoxedValue = !itemReturnTypeText.empty() &&
+                (itemReturnTypeText == "System.IntPtr" ||
+                 itemReturnTypeText == "System.UIntPtr" ||
+                 itemReturnTypeText == "intptr_t" ||
+                 itemReturnTypeText == "uintptr_t" ||
+                 itemReturnTypeText == "void*" ||
+                 itemReturnTypeText == "native int" ||
+                 itemReturnTypeText == "native uint" ||
+                 itemReturnTypeText.find("IntPtr") != std::string::npos ||
+                 itemReturnTypeText.find("UIntPtr") != std::string::npos ||
+                 itemReturnTypeText.find("Void*") != std::string::npos ||
+                 itemReturnTypeText.find("void*") != std::string::npos);
+            LOG(LOG_LEVEL_INFO, "%s collectLGameVector: itemReturnType=%s boxedValue=%d",
+                logTag,
+                itemReturnTypeName ? itemReturnTypeName : "<null>",
+                itemReturnsBoxedValue ? 1 : 0);
+
+            int32_t count = -1;
+            for (const auto& candidate : countCandidates) {
+                ::Il2CppException* countException = nullptr;
+                ::Il2CppObject* countObject = m_pfunctionInfo->il2cpp_runtime_invoke(candidate.method, pVector, nullptr, &countException);
+                if (countException != nullptr || countObject == nullptr) {
+                    LOG(LOG_LEVEL_WARN, "%s collectLGameVector: count invoke failed method=%s object=%p exc=%p",
+                        logTag, candidate.name ? candidate.name : "<null>", countObject, countException);
+                    continue;
+                }
+
+                int32_t candidateCount = -1;
+                std::memcpy(&candidateCount,
+                            reinterpret_cast<uint8_t*>(countObject) + sizeof(Il2CppObject),
+                            sizeof(int32_t));
+                LOG(LOG_LEVEL_INFO, "%s collectLGameVector: count candidate %s=%d",
+                    logTag, candidate.name ? candidate.name : "<null>", candidateCount);
+
+                if (candidateCount > 0) {
+                    count = candidateCount;
+                    countMethod = candidate.method;
+                    countMethodName = candidate.name;
+                    break;
+                }
+
+                if (candidateCount == 0 && count < 0) {
+                    count = 0;
+                    countMethod = candidate.method;
+                    countMethodName = candidate.name;
+                }
+            }
+
+            if (count <= 0) {
+                int32_t probedCount = 0;
+                constexpr int32_t kMaxProbeCount = 4096;
+                for (int32_t probeIndex = 0; probeIndex < kMaxProbeCount; ++probeIndex) {
+                    ::Il2CppException* probeException = nullptr;
+                    void* probeArgs[1] = { &probeIndex };
+                    ::Il2CppObject* probeObject = m_pfunctionInfo->il2cpp_runtime_invoke(itemMethod, pVector, probeArgs, &probeException);
+                    if (probeException != nullptr || probeObject == nullptr) {
+                        break;
+                    }
+                    ++probedCount;
+                }
+
+                if (probedCount > 0) {
+                    count = probedCount;
+                    LOG(LOG_LEVEL_WARN, "%s collectLGameVector: count fallback via %s probe=%d",
+                        logTag, itemMethodName ? itemMethodName : "<null>", count);
+                    if (probedCount == kMaxProbeCount) {
+                        LOG(LOG_LEVEL_WARN, "%s collectLGameVector: probe hit hard limit=%d, result may be truncated",
+                            logTag, kMaxProbeCount);
+                    }
+                } else {
+                    LOG(LOG_LEVEL_WARN, "%s collectLGameVector: count=%d", logTag, count);
+                    return result;
+                }
+            }
+
+            LOG(LOG_LEVEL_INFO, "%s collectLGameVector: count=%d", logTag, count);
+
+            result.reserve(static_cast<size_t>(count));
+            for (int32_t i = 0; i < count; ++i) {
+                ::Il2CppException* itemException = nullptr;
+                ::Il2CppObject* itemObject = nullptr;
+
+                if constexpr (std::is_pointer_v<T>) {
+                    if (!itemReturnsBoxedValue && itemMethod != nullptr && itemMethod->methodPointer != nullptr) {
+                        using DirectItemMethod = ::Il2CppObject* (*)(void*, int32_t, const ::MethodInfo*);
+                        auto directItemMethod = reinterpret_cast<DirectItemMethod>(itemMethod->methodPointer);
+                        if (i < 4) {
+                            LOG(LOG_LEVEL_INFO, "%s collectLGameVector: direct item call index=%d ptr=%p",
+                                logTag, i, reinterpret_cast<void*>(itemMethod->methodPointer));
+                        }
+                        itemObject = directItemMethod ? directItemMethod(pVector, i, itemMethod) : nullptr;
+                    }
+                }
+
+                if (itemObject == nullptr) {
+                    void* itemArgs[1] = { &i };
+                    itemObject = m_pfunctionInfo->il2cpp_runtime_invoke(itemMethod, pVector, itemArgs, &itemException);
+                }
+
+                if (itemException != nullptr || itemObject == nullptr) {
+                    LOG(LOG_LEVEL_WARN, "%s collectLGameVector: item invoke failed index=%d object=%p exc=%p",
+                        logTag, i, itemObject, itemException);
+                    continue;
+                }
+
+                if constexpr (std::is_pointer_v<T>) {
+                    if (itemReturnsBoxedValue || (itemMethodName != nullptr && strcmp(itemMethodName, "GetPtrByIndex") == 0)) {
+                        T item{};
+                        std::memcpy(&item,
+                                    reinterpret_cast<uint8_t*>(itemObject) + sizeof(Il2CppObject),
+                                    sizeof(T));
+                        result.push_back(item);
+                    } else {
+                        result.push_back(reinterpret_cast<T>(itemObject));
+                    }
+                } else {
+                    T item{};
+                    std::memcpy(&item,
+                                reinterpret_cast<uint8_t*>(itemObject) + sizeof(Il2CppObject),
+                                sizeof(T));
+                    result.push_back(item);
+                }
+
+                if constexpr (std::is_pointer_v<T>) {
+                    if (i < 4) {
+                        LOG(LOG_LEVEL_INFO, "%s collectLGameVector: item[%d]=%p", logTag, i, reinterpret_cast<void*>(result.back()));
+                    }
+                }
+            }
+            return result;
+        }
+
         /** @brief 打印 m_miniMapData 中存储的所有数据（调试用） */
         void printMiniMapData() const;
+
+        /** @brief 获取最近一次 updateBulletData() 遍历的弹道数据快照 */
+        const std::vector<BulletInfo>& getBulletData() const { return m_bulletData; }
+
+        /** @brief 获取最近一次 updateTerrainData() 遍历的地形数据快照 */
+        const TerrainData& getTerrainData() const { return m_terrainData; }
 
         /** @brief 获取最近一次 updateMiniMapData() 遍历的小地图数据快照 */
         const MiniMapData& getMiniMapData() const { return m_miniMapData; }
@@ -163,6 +644,15 @@ namespace lol {
 
         /** @brief 获取所有玩家的队伍管理器对象指针 */
         void* get_battleTeamMgr();
+
+        /** @brief 获取当前战斗对象 */
+        void* get_battle();
+
+        /** @brief 获取当前战斗的弹道管理器对象 */
+        void* get_bulletMgr();
+
+        /** @brief 获取当前战斗的地图管理器对象 */
+        void* get_visiMapMgr();
 
         /**
          * @brief  验证指针指向的内存页是否可读（不触发 SIGSEGV）
@@ -466,6 +956,24 @@ namespace lol {
         }
 
         /**
+         * @brief  读取 FixVector3_Fix64 原始坐标并转换为 UnityVector3
+         * @param  pObject  对象指针
+         * @param  offset   字段偏移
+         * @param  outValue [传出] 转换后的坐标
+         * @return 成功返回 true
+         */
+        bool readFixVector3(void* pObject, uint32_t offset, UnityVector3& outValue);
+
+        /**
+         * @brief  读取 FixVector2_Fix64 原始坐标
+         * @param  pObject  对象指针
+         * @param  offset   字段偏移
+         * @param  outValue [传出] 原始坐标
+         * @return 成功返回 true
+         */
+        bool readFixVector2Raw(void* pObject, uint32_t offset, FixVector2Raw& outValue);
+
+        /**
          * @brief   通过类名和字段名自动查找偏移并读取成员值
          * @tparam  T               要读取的目标类型
          * @param   pObject         对象基地址
@@ -485,8 +993,79 @@ namespace lol {
             if (offset == 0xFFFFFFFF) return T{};
             return *reinterpret_cast<T*>((uint64_t)pObject + offset);
         }
+
+        template<typename T>
+        static std::string getCppTypeName() {
+            if constexpr (std::is_same_v<T, FixVector2Raw>) {
+                return "FixVector2Raw";
+            } else if constexpr (std::is_same_v<T, FrameEngine_Common_FixVector3_Fix64_Fields>) {
+                return "FixVector3_Fix64";
+            } else if constexpr (std::is_same_v<T, void*>) {
+                return "void*";
+            } else if constexpr (std::is_same_v<T, bool>) {
+                return "bool";
+            } else if constexpr (std::is_same_v<T, int8_t>) {
+                return "int8_t";
+            } else if constexpr (std::is_same_v<T, uint8_t>) {
+                return "uint8_t";
+            } else if constexpr (std::is_same_v<T, int16_t>) {
+                return "int16_t";
+            } else if constexpr (std::is_same_v<T, uint16_t>) {
+                return "uint16_t";
+            } else if constexpr (std::is_same_v<T, int32_t>) {
+                return "int32_t";
+            } else if constexpr (std::is_same_v<T, uint32_t>) {
+                return "uint32_t";
+            } else if constexpr (std::is_same_v<T, int64_t>) {
+                return "int64_t";
+            } else if constexpr (std::is_same_v<T, uint64_t>) {
+                return "uint64_t";
+            } else if constexpr (std::is_same_v<T, float>) {
+                return "float";
+            } else if constexpr (std::is_same_v<T, double>) {
+                return "double";
+            } else if constexpr (std::is_pointer_v<T>) {
+                return "pointer";
+            } else {
+                return typeid(T).name();
+            }
+        }
+
+        template<typename T>
+        static std::string formatDataShellValue(const T& value) {
+            if constexpr (std::is_same_v<T, bool>) {
+                return value ? "true" : "false";
+            } else if constexpr (std::is_pointer_v<T>) {
+                std::ostringstream oss;
+                oss << reinterpret_cast<const void*>(value);
+                return oss.str();
+            } else if constexpr (std::is_floating_point_v<T>) {
+                std::ostringstream oss;
+                oss << value;
+                return oss.str();
+            } else if constexpr (std::is_integral_v<T>) {
+                if constexpr (std::is_signed_v<T>) {
+                    return std::to_string(static_cast<long long>(value));
+                } else {
+                    return std::to_string(static_cast<unsigned long long>(value));
+                }
+            } else {
+                return "<unsupported>";
+            }
+        }
+
+        template<typename T>
+        static std::vector<uint8_t> packDataShellValue(const T& value) {
+            std::vector<uint8_t> bytes(sizeof(T));
+            if (!bytes.empty()) {
+                std::memcpy(bytes.data(), &value, sizeof(T));
+            }
+            return bytes;
+        }
     private:
         std::shared_ptr<fun::function> m_pfunctionInfo; ///< 类信息查询接口实例
+        std::vector<BulletInfo> m_bulletData;           ///< 技能弹道快照
+        TerrainData m_terrainData;                      ///< 地形碰撞快照
         MiniMapData m_miniMapData;                      ///< 小地图遍历数据快照
     };
 

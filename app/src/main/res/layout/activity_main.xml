@@ -52,23 +52,6 @@
         android:background="#CCCCCC"
         android:layout_marginBottom="16dp" />
 
-    <!-- 可选: il2cppDumper / il2cppHeader -->
-    <CheckBox
-        android:id="@+id/cb_dumper"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="启用 il2cppDumper (导出 dump)"
-        android:checked="false"
-        android:layout_marginBottom="4dp" />
-
-    <CheckBox
-        android:id="@+id/cb_header"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="启用 il2cppHeader (导出头文件)"
-        android:checked="false"
-        android:layout_marginBottom="4dp" />
-
     <CheckBox
         android:id="@+id/cb_log"
         android:layout_width="match_parent"

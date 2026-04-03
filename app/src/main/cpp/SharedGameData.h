@@ -37,6 +37,18 @@ public:
         m_hasNewData.store(true, std::memory_order_release);
     }
 
+    /** @brief 由数据采集线程调用 —— 写入最新的弹道数据快照 */
+    void pushBulletData(const std::vector<lol::BulletInfo>& data) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_bulletData = data;
+    }
+
+    /** @brief 由数据采集线程调用 —— 写入最新的地形碰撞数据快照 */
+    void pushTerrainData(const lol::TerrainData& data) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_terrainData = data;
+    }
+
     /**
      * @brief 由 ImGui 渲染线程调用 —— 拉取最新数据（消费型：拉取后标记为已读）
      * @param outData [传出] 最新的 MiniMapData
@@ -55,6 +67,18 @@ public:
     lol::MiniMapData getLatestData() {
         std::lock_guard<std::mutex> lock(m_mutex);
         return m_data;
+    }
+
+    /** @brief 获取最新弹道数据快照（非消费型） */
+    std::vector<lol::BulletInfo> getLatestBulletData() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_bulletData;
+    }
+
+    /** @brief 获取最新地形碰撞数据快照（非消费型） */
+    lol::TerrainData getLatestTerrainData() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_terrainData;
     }
 
     /** @brief 设置对局是否进行中 */
@@ -120,6 +144,8 @@ private:
     std::atomic<bool> m_autoClearMinionsEnabled{false};
     std::atomic<bool> m_normalAttackRequested{false};
     std::atomic<uint64_t> m_normalAttackRequestSeq{0};
+    std::vector<lol::BulletInfo> m_bulletData;
+    lol::TerrainData m_terrainData;
 };
 
 #endif // SHARED_GAME_DATA_H

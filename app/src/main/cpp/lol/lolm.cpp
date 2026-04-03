@@ -215,6 +215,92 @@ void *lol::FEVisi::get_battleTeamMgr() {
     return fn ? fn() : nullptr;
 }
 
+void* lol::FEVisi::get_battle() {
+    typedef void* (*get_battlepfn)();
+    auto fn = (get_battlepfn)m_pfunctionInfo->GetMethodFun(
+            "ilbil2cpp.so",
+            "Assembly-CSharp.dll",
+            "FEVisi",
+            "FrameEngine.Visual.FEVisi",
+            "get_battle");
+    return fn ? fn() : nullptr;
+}
+
+void* lol::FEVisi::get_bulletMgr() {
+    void* battle = get_battle();
+    if (!battle) {
+        LOG(LOG_LEVEL_WARN, "[Bullet] get_battle() 返回空指针");
+        return nullptr;
+    }
+
+    typedef void* (*get_bulletMgrpfn)(void*);
+    static get_bulletMgrpfn s_fn = nullptr;
+    if (!s_fn) {
+        s_fn = reinterpret_cast<get_bulletMgrpfn>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so",
+                "Assembly-CSharp.dll",
+                "Battle",
+                "FrameEngine.Logic.Battle",
+                "get_bulletMgr"));
+        LOG(LOG_LEVEL_INFO, "[Bullet] resolve Battle.get_bulletMgr=%p", reinterpret_cast<void*>(s_fn));
+    }
+    if (!s_fn) {
+        LOG(LOG_LEVEL_ERROR, "[Bullet] Battle.get_bulletMgr 解析失败");
+        return nullptr;
+    }
+
+    void* bulletMgr = s_fn(battle);
+    if (!bulletMgr) {
+        LOG(LOG_LEVEL_WARN, "[Bullet] Battle.get_bulletMgr() 返回空指针, battle=%p", battle);
+    } else {
+        LOG(LOG_LEVEL_INFO, "[Bullet] bulletMgr=%p", bulletMgr);
+    }
+    return bulletMgr;
+}
+
+void* lol::FEVisi::get_visiMapMgr() {
+    void* battle = get_battle();
+    if (!battle) {
+        LOG(LOG_LEVEL_WARN, "[Terrain] get_battle() 返回空指针");
+        return nullptr;
+    }
+
+    typedef void* (*get_visiMapMgrpfn)(void*);
+    static get_visiMapMgrpfn s_fn = nullptr;
+    if (!s_fn) {
+        s_fn = reinterpret_cast<get_visiMapMgrpfn>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so",
+                "Assembly-CSharp.dll",
+                "Battle",
+                "FrameEngine.Logic.Battle",
+                "get_visiMapMgr"));
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve Battle.get_visiMapMgr=%p", reinterpret_cast<void*>(s_fn));
+    }
+    if (!s_fn) {
+        LOG(LOG_LEVEL_ERROR, "[Terrain] Battle.get_visiMapMgr 解析失败");
+        return nullptr;
+    }
+
+    void* visiMapMgr = s_fn(battle);
+    LOG(LOG_LEVEL_INFO, "[Terrain] visiMapMgr=%p battle=%p", visiMapMgr, battle);
+    return visiMapMgr;
+}
+
+bool lol::FEVisi::readFixVector3(void* pObject, uint32_t offset, UnityVector3& outValue) {
+    if (!pObject || offset == INVALID_OFFSET) return false;
+    const auto raw = ReadMemberValue<FrameEngine_Common_FixVector3_Fix64_Fields>(pObject, offset);
+    outValue.x = DecoderFix64(static_cast<uint64_t>(raw.x.rawValue));
+    outValue.y = DecoderFix64(static_cast<uint64_t>(raw.y.rawValue));
+    outValue.z = DecoderFix64(static_cast<uint64_t>(raw.z.rawValue));
+    return true;
+}
+
+bool lol::FEVisi::readFixVector2Raw(void* pObject, uint32_t offset, FixVector2Raw& outValue) {
+    if (!pObject || offset == INVALID_OFFSET) return false;
+    outValue = ReadMemberValue<FixVector2Raw>(pObject, offset);
+    return true;
+}
+
 int32_t lol::FEVisi::get_MiniIconBaseCtrlType(void* pData) {
 
     static uint32_t iconTypeOffset = INVALID_OFFSET;
@@ -961,6 +1047,7 @@ void *lol::FEVisi::updateMiniMapData() {
                     readEnemyHeroHP(pAttribute, &info.curHp, &info.maxHp);
                 }
                 info.heroResId = readHeroResId(actor);
+                info.objId = readActorObjId(actor);
 
                 // 英雄名: 优先从缓存获取, 缓存未命中才调用 IL2CPP
                 if (info.heroResId > 0) {
@@ -1142,6 +1229,1512 @@ void lol::FEVisi::updateMinionData() {
     LOG(LOG_LEVEL_INFO, "[Minion] updateMinionData 完成，count=%zu", m_miniMapData.minions.size());
 }
 
+void lol::FEVisi::updateBulletData() {
+    LOG(LOG_LEVEL_INFO, "[Bullet] updateBulletData begin");
+    m_bulletData.clear();
+    if (!m_pfunctionInfo) return;
+
+    void* bulletMgr = get_bulletMgr();
+    if (!bulletMgr || !IsReadableMemory(bulletMgr, sizeof(void*))) {
+        LOG(LOG_LEVEL_WARN, "[Bullet] bulletMgr=%p 不可读或为空", bulletMgr);
+        return;
+    }
+
+    static void* (*s_getListObjects)(void*) = nullptr;
+    if (!s_getListObjects) {
+        s_getListObjects = reinterpret_cast<void* (*)(void*)>(m_pfunctionInfo->GetMethodFun(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FixObjectMgr", "FrameEngine.Logic.FixObjectMgr",
+                "get_listObjects"));
+    }
+    if (!s_getListObjects) {
+        LOG(LOG_LEVEL_ERROR, "[Bullet] resolve FixObjectMgr.get_listObjects failed");
+        return;
+    }
+
+    LOG(LOG_LEVEL_INFO, "[Bullet] FixObjectMgr.get_listObjects=%p", reinterpret_cast<void*>(s_getListObjects));
+
+    void* bulletList = s_getListObjects(bulletMgr);
+    if (!bulletList || !IsReadableMemory(bulletList, sizeof(void*))) {
+        LOG(LOG_LEVEL_WARN, "[Bullet] listObjects=%p 不可读", bulletList);
+        return;
+    }
+
+    LOG(LOG_LEVEL_INFO, "[Bullet] listObjects=%p", bulletList);
+
+    const auto bulletObjects = collectDataShellList<void*>(bulletList);
+    if (bulletObjects.empty()) {
+        LOG(LOG_LEVEL_WARN, "[Bullet] bullet list empty");
+        return;
+    }
+
+    LOG(LOG_LEVEL_INFO, "[Bullet] collectDataShellList count=%zu", bulletObjects.size());
+
+    static void* (*s_getBulletOwnerActor)(void*) = nullptr;
+    static std::unordered_map<void*, uint32_t> s_isHeroOffsetCache;
+
+    auto resolveZeroArgMethod = [&](::Il2CppClass* klass, const std::array<const char*, 2>& names) -> uint64_t {
+        for (auto* current = klass; current; current = m_pfunctionInfo->il2cpp_class_get_parent(current)) {
+            for (const char* name : names) {
+                if (!name) continue;
+                uint64_t methodAddr = m_pfunctionInfo->GetMethodFunByClass(current, name, 0);
+                if (methodAddr != 0) {
+                    return methodAddr;
+                }
+            }
+        }
+        return 0;
+    };
+
+    auto resolveGetterUInt32 = [&](void* bulletObj, ::Il2CppClass* klass, const std::array<const char*, 2>& names, const char* label) -> uint32_t {
+        uint64_t methodAddr = resolveZeroArgMethod(klass, names);
+        if (!methodAddr) return 0;
+        using GetterFn = uint32_t (*)(void*);
+        auto fn = reinterpret_cast<GetterFn>(methodAddr);
+        uint32_t value = fn ? fn(bulletObj) : 0;
+        LOG(LOG_LEVEL_INFO, "[Bullet] getter %s resolved=%p", label, reinterpret_cast<void*>(methodAddr));
+        return value;
+    };
+
+    auto resolveGetterInt32 = [&](void* bulletObj, ::Il2CppClass* klass, const std::array<const char*, 2>& names, const char* label) -> int32_t {
+        uint64_t methodAddr = resolveZeroArgMethod(klass, names);
+        if (!methodAddr) return 0;
+        using GetterFn = int32_t (*)(void*);
+        auto fn = reinterpret_cast<GetterFn>(methodAddr);
+        int32_t value = fn ? fn(bulletObj) : 0;
+        LOG(LOG_LEVEL_INFO, "[Bullet] getter %s resolved=%p", label, reinterpret_cast<void*>(methodAddr));
+        return value;
+    };
+
+    auto resolveGetterPtr = [&](void* bulletObj, ::Il2CppClass* klass, const std::array<const char*, 2>& names, const char* label) -> void* {
+        uint64_t methodAddr = resolveZeroArgMethod(klass, names);
+        if (!methodAddr) return nullptr;
+        using GetterFn = void* (*)(void*);
+        auto fn = reinterpret_cast<GetterFn>(methodAddr);
+        void* value = fn ? fn(bulletObj) : nullptr;
+        LOG(LOG_LEVEL_INFO, "[Bullet] getter %s resolved=%p", label, reinterpret_cast<void*>(methodAddr));
+        return value;
+    };
+
+    auto isHeroLogicActor = [&](void* logicActor) -> bool {
+        if (!logicActor || !IsReadableMemory(logicActor, sizeof(void*))) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: logicActor=%p unreadable", logicActor);
+            return false;
+        }
+
+        auto* logicKlass = GetObjectKlass(logicActor);
+        if (!logicKlass) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: logicActor=%p klass=null", logicActor);
+            return false;
+        }
+
+        const std::string logicTypeName = getManagedTypeName(logicActor);
+        if (logicTypeName.find("BattleActor") == std::string::npos) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: logicActor=%p type=%s not BattleActor",
+                logicActor, logicTypeName.c_str());
+            return false;
+        }
+
+        auto [offsetIt, inserted] = s_isHeroOffsetCache.try_emplace(logicKlass, INVALID_OFFSET);
+        if (inserted) {
+            offsetIt->second = GetFieldOffsetFromKlass(logicKlass, "isHero");
+            LOG(LOG_LEVEL_INFO, "[Bullet] resolve BattleActor.isHero klass=%p type=%s offset=%u",
+                logicKlass, logicTypeName.c_str(), offsetIt->second);
+        }
+
+        if (offsetIt->second == INVALID_OFFSET) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: logicActor=%p type=%s isHero offset invalid",
+                logicActor, logicTypeName.c_str());
+            return false;
+        }
+
+        const bool isHero = ReadMemberValue<bool>(logicActor, offsetIt->second);
+        if (!isHero) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: logicActor=%p type=%s isHero=false offset=%u",
+                logicActor, logicTypeName.c_str(), offsetIt->second);
+        }
+        return isHero;
+    };
+
+    auto isHeroOwnerActor = [&](void* ownerActor) -> bool {
+        if (!ownerActor || !IsReadableMemory(ownerActor, sizeof(void*))) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: caster=%p unreadable", ownerActor);
+            return false;
+        }
+
+        auto* ownerKlass = GetObjectKlass(ownerActor);
+        if (!ownerKlass) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: caster=%p klass=null", ownerActor);
+            return false;
+        }
+
+        const std::string ownerTypeName = getManagedTypeName(ownerActor);
+        if (ownerTypeName.find("BattleActorVisi") != std::string::npos) {
+            if (!s_getBulletOwnerActor) {
+                s_getBulletOwnerActor = reinterpret_cast<void* (*)(void*)>(m_pfunctionInfo->GetMethodFun(
+                        "ilbil2cpp.so", "Assembly-CSharp.dll",
+                        "BattleActorVisi", "FrameEngine.Visual.BattleActorVisi",
+                        "get_actor"));
+                LOG(LOG_LEVEL_INFO, "[Bullet] resolve BattleActorVisi.get_actor=%p", reinterpret_cast<void*>(s_getBulletOwnerActor));
+            }
+
+            if (!s_getBulletOwnerActor) {
+                LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: caster type=%s get_actor unresolved", ownerTypeName.c_str());
+                return false;
+            }
+
+            void* logicActor = s_getBulletOwnerActor ? s_getBulletOwnerActor(ownerActor) : nullptr;
+            if (!logicActor) {
+                LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: caster type=%s actor=%p get_actor returned null",
+                    ownerTypeName.c_str(), ownerActor);
+                return false;
+            }
+            return isHeroLogicActor(logicActor);
+        }
+
+        if (ownerTypeName.find("BattleActor") != std::string::npos) {
+            return isHeroLogicActor(ownerActor);
+        }
+
+        LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: unsupported caster type=%s caster=%p klass=%p",
+            ownerTypeName.c_str(), ownerActor, ownerKlass);
+        return false;
+    };
+
+    struct BulletFieldOffsets {
+        uint32_t objId = INVALID_OFFSET;
+        uint32_t resId = INVALID_OFFSET;
+        uint32_t trajectoryType = INVALID_OFFSET;
+        uint32_t bulletTargetType = INVALID_OFFSET;
+        uint32_t isFinish = INVALID_OFFSET;
+        uint32_t currentSpeed = INVALID_OFFSET;
+        uint32_t distanceLimit = INVALID_OFFSET;
+        uint32_t speedScale = INVALID_OFFSET;
+        uint32_t initialPoint = INVALID_OFFSET;
+        uint32_t startMovePosition = INVALID_OFFSET;
+        uint32_t targetPosition = INVALID_OFFSET;
+        uint32_t lastTickPosition = INVALID_OFFSET;
+        uint32_t velocity = INVALID_OFFSET;
+        uint32_t caster = INVALID_OFFSET;
+        uint32_t targetActor = INVALID_OFFSET;
+        uint32_t targetActorOffset = INVALID_OFFSET;
+    };
+
+    static std::unordered_map<void*, BulletFieldOffsets> s_bulletOffsetCache;
+
+    auto resolveFieldOffset = [&](::Il2CppClass* klass, const auto& candidates) -> uint32_t {
+        if (!klass) {
+            return INVALID_OFFSET;
+        }
+        for (const char* fieldName : candidates) {
+            uint32_t offset = GetFieldOffsetFromKlass(klass, fieldName);
+            if (offset != INVALID_OFFSET) {
+                return offset;
+            }
+        }
+        return INVALID_OFFSET;
+    };
+
+    auto dumpClassFieldsOnce = [&](::Il2CppClass* klass, const char* reason) {
+        if (!klass) return;
+
+        static std::unordered_map<void*, bool> s_dumpedClasses;
+        auto [it, inserted] = s_dumpedClasses.emplace(reinterpret_cast<void*>(klass), true);
+        if (!inserted) return;
+
+        for (auto* current = klass; current; current = m_pfunctionInfo->il2cpp_class_get_parent(current)) {
+            const char* className = m_pfunctionInfo->il2cpp_class_get_name(current);
+            const char* namespaceName = m_pfunctionInfo->il2cpp_class_get_namespace(current);
+            LOG(LOG_LEVEL_INFO, "[Bullet] field dump (%s) class=%s namespace=%s klass=%p",
+                reason,
+                className ? className : "<null>",
+                namespaceName ? namespaceName : "",
+                current);
+
+            void* iter = nullptr;
+            while (auto* field = m_pfunctionInfo->il2cpp_class_get_fields(current, &iter)) {
+                const char* fieldName = m_pfunctionInfo->il2cpp_field_get_name(field);
+                const uint32_t fieldOffset = static_cast<uint32_t>(m_pfunctionInfo->il2cpp_field_get_offset(field));
+                LOG(LOG_LEVEL_INFO, "[Bullet] field: %s offset=0x%X", fieldName ? fieldName : "<null>", fieldOffset);
+            }
+        }
+    };
+
+    size_t filteredNonHeroCount = 0;
+
+    for (const auto& entry : bulletObjects) {
+        void* bulletObj = entry.objectPtr;
+        if (!bulletObj || !IsReadableMemory(bulletObj, sizeof(void*))) {
+            continue;
+        }
+
+        auto* bulletKlass = GetObjectKlass(bulletObj);
+        if (!bulletKlass) {
+            continue;
+        }
+
+        const std::string bulletTypeName = getManagedTypeName(bulletObj);
+        LOG(LOG_LEVEL_INFO, "[Bullet] item obj=%p klass=%p type=%s",
+            bulletObj, bulletKlass, bulletTypeName.c_str());
+
+        auto [cacheIt, inserted] = s_bulletOffsetCache.try_emplace(bulletKlass);
+        BulletFieldOffsets& offsets = cacheIt->second;
+        if (inserted) {
+            offsets.objId = resolveFieldOffset(bulletKlass, std::array{ "objId" });
+            if (offsets.objId == INVALID_OFFSET) {
+                offsets.objId = resolveFieldOffset(bulletKlass, std::array{ "<objId>k__BackingField", "<ObjId>k__BackingField" });
+            }
+            offsets.resId = resolveFieldOffset(bulletKlass, std::array{ "resID", "resId" });
+            if (offsets.resId == INVALID_OFFSET) {
+                offsets.resId = resolveFieldOffset(bulletKlass, std::array{ "<resID>k__BackingField", "<resId>k__BackingField" });
+            }
+            offsets.trajectoryType = resolveFieldOffset(bulletKlass, std::array{ "trajectoryType" });
+            if (offsets.trajectoryType == INVALID_OFFSET) {
+                offsets.trajectoryType = resolveFieldOffset(bulletKlass, std::array{ "<trajectoryType>k__BackingField" });
+            }
+            offsets.bulletTargetType = resolveFieldOffset(bulletKlass, std::array{ "bulletTargetType" });
+            if (offsets.bulletTargetType == INVALID_OFFSET) {
+                offsets.bulletTargetType = resolveFieldOffset(bulletKlass, std::array{ "<bulletTargetType>k__BackingField" });
+            }
+            offsets.isFinish = resolveFieldOffset(bulletKlass, std::array{ "isFinish" });
+            if (offsets.isFinish == INVALID_OFFSET) {
+                offsets.isFinish = resolveFieldOffset(bulletKlass, std::array{ "<isFinish>k__BackingField" });
+            }
+            offsets.currentSpeed = resolveFieldOffset(bulletKlass, std::array{ "currentSpeed" });
+            if (offsets.currentSpeed == INVALID_OFFSET) {
+                offsets.currentSpeed = resolveFieldOffset(bulletKlass, std::array{ "<currentSpeed>k__BackingField" });
+            }
+            offsets.distanceLimit = resolveFieldOffset(bulletKlass, std::array{ "distanceLimit" });
+            if (offsets.distanceLimit == INVALID_OFFSET) {
+                offsets.distanceLimit = resolveFieldOffset(bulletKlass, std::array{ "<distanceLimit>k__BackingField" });
+            }
+            offsets.speedScale = resolveFieldOffset(bulletKlass, std::array{ "speedScale" });
+            if (offsets.speedScale == INVALID_OFFSET) {
+                offsets.speedScale = resolveFieldOffset(bulletKlass, std::array{ "<speedScale>k__BackingField" });
+            }
+            offsets.initialPoint = resolveFieldOffset(bulletKlass, std::array{ "initialPoint", "initialEmitActorPos" });
+            if (offsets.initialPoint == INVALID_OFFSET) {
+                offsets.initialPoint = resolveFieldOffset(bulletKlass, std::array{ "<initialPoint>k__BackingField", "<initialEmitActorPos>k__BackingField" });
+            }
+            offsets.startMovePosition = resolveFieldOffset(bulletKlass, std::array{ "startMovePosition" });
+            if (offsets.startMovePosition == INVALID_OFFSET) {
+                offsets.startMovePosition = resolveFieldOffset(bulletKlass, std::array{ "<startMovePosition>k__BackingField" });
+            }
+            offsets.targetPosition = resolveFieldOffset(bulletKlass, std::array{ "targetPosition", "destination" });
+            if (offsets.targetPosition == INVALID_OFFSET) {
+                offsets.targetPosition = resolveFieldOffset(bulletKlass, std::array{ "<targetPosition>k__BackingField", "<destination>k__BackingField" });
+            }
+            offsets.lastTickPosition = resolveFieldOffset(bulletKlass, std::array{ "lastTickPosition" });
+            if (offsets.lastTickPosition == INVALID_OFFSET) {
+                offsets.lastTickPosition = resolveFieldOffset(bulletKlass, std::array{ "<lastTickPosition>k__BackingField" });
+            }
+            offsets.velocity = resolveFieldOffset(bulletKlass, std::array{ "velocity" });
+            if (offsets.velocity == INVALID_OFFSET) {
+                offsets.velocity = resolveFieldOffset(bulletKlass, std::array{ "<velocity>k__BackingField" });
+            }
+            offsets.caster = resolveFieldOffset(bulletKlass, std::array{ "caster" });
+            if (offsets.caster == INVALID_OFFSET) {
+                offsets.caster = resolveFieldOffset(bulletKlass, std::array{ "<caster>k__BackingField" });
+            }
+            offsets.targetActor = resolveFieldOffset(bulletKlass, std::array{ "targetActor" });
+            if (offsets.targetActor == INVALID_OFFSET) {
+                offsets.targetActor = resolveFieldOffset(bulletKlass, std::array{ "<targetActor>k__BackingField" });
+            }
+            offsets.targetActorOffset = resolveFieldOffset(bulletKlass, std::array{ "offsetOfTargetActor" });
+            if (offsets.targetActorOffset == INVALID_OFFSET) {
+                offsets.targetActorOffset = resolveFieldOffset(bulletKlass, std::array{ "<offsetOfTargetActor>k__BackingField" });
+            }
+
+            LOG(LOG_LEVEL_INFO,
+                "[Bullet] resolved klass=%p type=%s objId=%u resId=%u traj=%u target=%u isFinish=%u curSpeed=%u dist=%u speedScale=%u initial=%u start=%u targetPos=%u lastTick=%u velocity=%u caster=%u targetActor=%u targetActorOffset=%u",
+                bulletKlass, bulletTypeName.c_str(), offsets.objId, offsets.resId, offsets.trajectoryType,
+                offsets.bulletTargetType, offsets.isFinish, offsets.currentSpeed, offsets.distanceLimit,
+                offsets.speedScale, offsets.initialPoint, offsets.startMovePosition, offsets.targetPosition,
+                offsets.lastTickPosition, offsets.velocity, offsets.caster, offsets.targetActor,
+                offsets.targetActorOffset);
+
+            if (offsets.objId == INVALID_OFFSET || offsets.resId == INVALID_OFFSET ||
+                offsets.caster == INVALID_OFFSET || offsets.targetActor == INVALID_OFFSET) {
+                LOG(LOG_LEVEL_INFO,
+                    "[Bullet] offset fallback enabled klass=%p type=%s objId=%u resId=%u caster=%u targetActor=%u",
+                    bulletKlass, bulletTypeName.c_str(), offsets.objId, offsets.resId, offsets.caster, offsets.targetActor);
+                dumpClassFieldsOnce(bulletKlass, "unresolved bullet fields");
+            }
+        }
+
+        BulletInfo info{};
+        if (offsets.objId != INVALID_OFFSET) {
+            info.objId = ReadMemberValue<uint32_t>(bulletObj, offsets.objId);
+        } else {
+            info.objId = resolveGetterUInt32(bulletObj, bulletKlass, std::array{ "get_objId", "get_ObjId" }, "objId");
+        }
+
+        if (offsets.resId != INVALID_OFFSET) {
+            info.resId = ReadMemberValue<int32_t>(bulletObj, offsets.resId);
+        } else {
+            info.resId = resolveGetterInt32(bulletObj, bulletKlass, std::array{ "get_resID", "get_resId" }, "resId");
+        }
+
+        if (offsets.trajectoryType != INVALID_OFFSET) {
+            info.trajectoryType = ReadMemberValue<int32_t>(bulletObj, offsets.trajectoryType);
+        } else {
+            info.trajectoryType = resolveGetterInt32(bulletObj, bulletKlass, std::array{ "get_trajectoryType", "get_TrajectoryType" }, "trajectoryType");
+        }
+        if (offsets.bulletTargetType != INVALID_OFFSET) {
+            info.bulletTargetType = ReadMemberValue<int32_t>(bulletObj, offsets.bulletTargetType);
+        } else {
+            info.bulletTargetType = resolveGetterInt32(bulletObj, bulletKlass, std::array{ "get_bulletTargetType", "get_BulletTargetType" }, "bulletTargetType");
+        }
+        if (offsets.isFinish != INVALID_OFFSET) {
+            info.isFinish = ReadMemberValue<bool>(bulletObj, offsets.isFinish);
+        }
+        if (offsets.currentSpeed != INVALID_OFFSET) {
+            info.currentSpeed = DecoderFix64(static_cast<uint64_t>(ReadMemberValue<int64_t>(bulletObj, offsets.currentSpeed)));
+        }
+        if (offsets.distanceLimit != INVALID_OFFSET) {
+            info.distanceLimit = DecoderFix64(static_cast<uint64_t>(ReadMemberValue<int64_t>(bulletObj, offsets.distanceLimit)));
+        }
+        if (offsets.speedScale != INVALID_OFFSET) {
+            info.speedScale = DecoderFix64(static_cast<uint64_t>(ReadMemberValue<int64_t>(bulletObj, offsets.speedScale)));
+        }
+        if (offsets.initialPoint != INVALID_OFFSET) {
+            readFixVector3(bulletObj, offsets.initialPoint, info.initialPoint);
+        }
+        if (offsets.startMovePosition != INVALID_OFFSET) {
+            readFixVector3(bulletObj, offsets.startMovePosition, info.startMovePosition);
+        }
+        if (offsets.targetPosition != INVALID_OFFSET) {
+            readFixVector3(bulletObj, offsets.targetPosition, info.targetPosition);
+        }
+        if (offsets.lastTickPosition != INVALID_OFFSET) {
+            readFixVector3(bulletObj, offsets.lastTickPosition, info.lastTickPosition);
+        }
+        if (offsets.velocity != INVALID_OFFSET) {
+            readFixVector3(bulletObj, offsets.velocity, info.velocity);
+        }
+        if (offsets.caster != INVALID_OFFSET) {
+            info.caster = ReadMemberPtr(bulletObj, offsets.caster);
+        } else {
+            info.caster = resolveGetterPtr(bulletObj, bulletKlass, std::array{ "get_caster", "get_Caster" }, "caster");
+        }
+        if (offsets.targetActor != INVALID_OFFSET) {
+            info.targetActor = ReadMemberPtr(bulletObj, offsets.targetActor);
+        } else {
+            info.targetActor = resolveGetterPtr(bulletObj, bulletKlass, std::array{ "get_targetActor", "get_TargetActor" }, "targetActor");
+        }
+        if (offsets.targetActorOffset != INVALID_OFFSET) {
+            info.targetActorOffset = ReadMemberValue<int32_t>(bulletObj, offsets.targetActorOffset);
+        } else {
+            info.targetActorOffset = resolveGetterInt32(bulletObj, bulletKlass, std::array{ "get_offsetOfTargetActor", "get_OffsetOfTargetActor" }, "targetActorOffset");
+        }
+
+        if (!info.caster) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: objId=%u resId=%d type=%s caster=null",
+                info.objId, info.resId, bulletTypeName.c_str());
+            ++filteredNonHeroCount;
+            continue;
+        }
+
+        if (!isHeroOwnerActor(info.caster)) {
+            LOG(LOG_LEVEL_INFO, "[Bullet] skip bullet: objId=%u resId=%d type=%s caster=%p not hero",
+                info.objId, info.resId, bulletTypeName.c_str(), info.caster);
+            ++filteredNonHeroCount;
+            continue;
+        }
+
+        LOG(LOG_LEVEL_INFO, "[Bullet] hero bullet objId=%u resId=%d caster=%p targetActor=%p type=%s",
+            info.objId, info.resId, info.caster, info.targetActor, bulletTypeName.c_str());
+
+        info.bulletTypeName = bulletTypeName;
+        m_bulletData.push_back(std::move(info));
+    }
+
+    LOG(LOG_LEVEL_INFO, "[Bullet] updateBulletData 完成，count=%zu filteredNonHero=%zu",
+        m_bulletData.size(), filteredNonHeroCount);
+}
+
+bool lol::FEVisi::updateTerrainData() {
+    m_terrainData.clear();
+    LOG(LOG_LEVEL_INFO, "[Terrain] updateTerrainData begin (FixLevelAsset)");
+    if (!m_pfunctionInfo) {
+        LOG(LOG_LEVEL_WARN, "[Terrain] functionInfo 为空");
+        return false;
+    }
+
+    constexpr size_t kArrayHeaderSize = 0x20;
+
+    struct FixRectFix64Raw {
+        FrameEngine_Common_Fix64_Fields x;
+        FrameEngine_Common_Fix64_Fields y;
+        FrameEngine_Common_Fix64_Fields w;
+        FrameEngine_Common_Fix64_Fields h;
+    };
+
+    struct FixPolygon2DRaw {
+        int32_t id;
+        uint8_t isConvex;
+        uint8_t padding[3];
+        void* vertices;
+        FixRectFix64Raw aabb;
+    };
+
+    struct FixVector3Raw {
+        int64_t x;
+        int64_t y;
+        int64_t z;
+    };
+
+    struct ListObjectFieldsRaw {
+        void* items;
+        int32_t size;
+        int32_t version;
+        void* syncRoot;
+    };
+
+    auto findMethodInfoByClass = [&](::Il2CppClass* klass, const char* methodName, int32_t paramCount) -> const ::MethodInfo* {
+        if (!klass || !methodName) return nullptr;
+        m_pfunctionInfo->il2cpp_runtime_class_init(klass);
+        m_pfunctionInfo->il2cpp_class_init_all_method(klass);
+        void* iter = nullptr;
+        while (auto* method = m_pfunctionInfo->il2cpp_class_get_methods(klass, &iter)) {
+            const char* currentName = m_pfunctionInfo->il2cpp_method_get_name(method);
+            if (!currentName || strcmp(currentName, methodName) != 0) continue;
+            if (paramCount >= 0 && m_pfunctionInfo->il2cpp_method_get_param_count(method) != paramCount) continue;
+            return method;
+        }
+        return nullptr;
+    };
+
+    auto getArrayLength = [&](void* arrayObject) -> size_t {
+        if (!arrayObject || !IsReadableMemory(arrayObject, kArrayHeaderSize)) return 0;
+        auto* arrayHeader = reinterpret_cast<Il2CppArraySize*>(arrayObject);
+        return static_cast<size_t>(arrayHeader->max_length);
+    };
+
+    auto toUnityPoints = [&](const std::vector<FixVector2Raw>& rawPoints, const char* tag) {
+        std::vector<UnityVector3> points;
+        points.reserve(rawPoints.size());
+        for (const auto& raw : rawPoints) {
+            points.push_back(UnityVector3{
+                DecoderFix64(static_cast<uint64_t>(raw.x)),
+                0.0f,
+                DecoderFix64(static_cast<uint64_t>(raw.y))
+            });
+        }
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s points=%zu", tag, points.size());
+        return points;
+    };
+
+    auto readFixVector2Array = [&](void* arrayObject, const char* tag) {
+        std::vector<FixVector2Raw> values;
+        const size_t length = getArrayLength(arrayObject);
+        if (length == 0) return values;
+
+        values.reserve(length);
+        uint8_t* base = reinterpret_cast<uint8_t*>(arrayObject) + kArrayHeaderSize;
+        for (size_t index = 0; index < length; ++index) {
+            auto* item = reinterpret_cast<FixVector2Raw*>(base + index * sizeof(FixVector2Raw));
+            if (!IsReadableMemory(item, sizeof(FixVector2Raw))) continue;
+            values.push_back(*item);
+        }
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s raw FixVector2 count=%zu", tag, values.size());
+        return values;
+    };
+
+    auto readFixVector3Array = [&](void* arrayObject, const char* tag) {
+        std::vector<FixVector3Raw> values;
+        const size_t length = getArrayLength(arrayObject);
+        if (length == 0) return values;
+
+        values.reserve(length);
+        uint8_t* base = reinterpret_cast<uint8_t*>(arrayObject) + kArrayHeaderSize;
+        for (size_t index = 0; index < length; ++index) {
+            auto* item = reinterpret_cast<FixVector3Raw*>(base + index * sizeof(FixVector3Raw));
+            if (!IsReadableMemory(item, sizeof(FixVector3Raw))) continue;
+            values.push_back(*item);
+        }
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s raw FixVector3 count=%zu", tag, values.size());
+        return values;
+    };
+
+    auto readIntArray = [&](void* arrayObject, const char* tag) {
+        std::vector<int32_t> values;
+        const size_t length = getArrayLength(arrayObject);
+        if (length == 0) return values;
+
+        values.reserve(length);
+        uint8_t* base = reinterpret_cast<uint8_t*>(arrayObject) + kArrayHeaderSize;
+        for (size_t index = 0; index < length; ++index) {
+            auto* item = reinterpret_cast<int32_t*>(base + index * sizeof(int32_t));
+            if (!IsReadableMemory(item, sizeof(int32_t))) continue;
+            values.push_back(*item);
+        }
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s raw int count=%zu", tag, values.size());
+        return values;
+    };
+
+    auto readObjectArray = [&](void* arrayObject, const char* tag, size_t limit = 0) {
+        std::vector<void*> values;
+        size_t length = getArrayLength(arrayObject);
+        if (length == 0) return values;
+        if (limit != 0 && length > limit) length = limit;
+
+        values.reserve(length);
+        uint8_t* base = reinterpret_cast<uint8_t*>(arrayObject) + kArrayHeaderSize;
+        for (size_t index = 0; index < length; ++index) {
+            auto* item = reinterpret_cast<uint64_t*>(base + index * sizeof(uint64_t));
+            if (!IsReadableMemory(item, sizeof(uint64_t))) continue;
+            values.push_back(reinterpret_cast<void*>(*item));
+        }
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s object count=%zu", tag, values.size());
+        return values;
+    };
+
+    auto polygonFromStruct = [&](const FixPolygon2DRaw& polygon, const char* polygonType, const char* tag) {
+        TerrainPolygon output{};
+        output.polygonType = polygonType;
+        output.points = toUnityPoints(readFixVector2Array(polygon.vertices, tag), tag);
+        return output;
+    };
+
+    auto polygonsFromPolygonArray = [&](void* polygonArray, const char* polygonType, const char* tag) {
+        std::vector<TerrainPolygon> polygons;
+        const size_t length = getArrayLength(polygonArray);
+        if (length == 0) return polygons;
+
+        polygons.reserve(length);
+        uint8_t* base = reinterpret_cast<uint8_t*>(polygonArray) + kArrayHeaderSize;
+        for (size_t index = 0; index < length; ++index) {
+            auto* polygon = reinterpret_cast<FixPolygon2DRaw*>(base + index * sizeof(FixPolygon2DRaw));
+            if (!IsReadableMemory(polygon, sizeof(FixPolygon2DRaw))) continue;
+            TerrainPolygon terrainPolygon = polygonFromStruct(*polygon, polygonType, tag);
+            if (!terrainPolygon.points.empty()) {
+                polygons.push_back(std::move(terrainPolygon));
+            }
+        }
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s polygon count=%zu", tag, polygons.size());
+        return polygons;
+    };
+
+    static ::Il2CppClass* s_fixLevelAssetClass = nullptr;
+    static ::Il2CppClass* s_dataConfigClass = nullptr;
+    static ::Il2CppClass* s_battleLevelDCClass = nullptr;
+    static ::Il2CppClass* s_battleMapDCClass = nullptr;
+    static ::Il2CppClass* s_matchBattleModeResObjectClass = nullptr;
+    static ::Il2CppClass* s_mapDataProxyClass = nullptr;
+    static ::Il2CppClass* s_mapDataSetClass = nullptr;
+    static ::Il2CppClass* s_mapResObjectClass = nullptr;
+    static ::Il2CppClass* s_mapInfoPointDataClass = nullptr;
+    static ::Il2CppClass* s_mapInfoPolylineClass = nullptr;
+    static ::Il2CppClass* s_mapPolygonVertexClass = nullptr;
+    static ::Il2CppClass* s_mapBlockAnchorDataClass = nullptr;
+    static ::Il2CppClass* s_mapBlockGroupDataClass = nullptr;
+    static ::Il2CppClass* s_mapBlockPointDataClass = nullptr;
+    static ::Il2CppClass* s_unityObjectClass = nullptr;
+    static ::Il2CppClass* s_unityResourcesClass = nullptr;
+    static const ::MethodInfo* s_getConfigMethod = nullptr;
+    static const ::MethodInfo* s_getBattleLevelDCMethod = nullptr;
+    static const ::MethodInfo* s_getBattleMapDCMethod = nullptr;
+    static const ::MethodInfo* s_getMapDataProxyMethod = nullptr;
+    static const ::MethodInfo* s_getMapTypeMethod = nullptr;
+    static const ::MethodInfo* s_getMapDataSetsMethod = nullptr;
+    static const ::MethodInfo* s_getMapDCMethod = nullptr;
+    static const ::MethodInfo* s_getMapDataSetDCMethod = nullptr;
+    static const ::MethodInfo* s_getMapDataSetMapNodesResMethod = nullptr;
+    static const ::MethodInfo* s_getMapDataSetMapResMethod = nullptr;
+    static const ::MethodInfo* s_getMapResInfoPointDataMethod = nullptr;
+    static const ::MethodInfo* s_getInfoPointDataPolygonsMethod = nullptr;
+    static const ::MethodInfo* s_getInfoPointDataPolylinesMethod = nullptr;
+    static const ::MethodInfo* s_getInfoPolylineVerticesMethod = nullptr;
+    static const ::MethodInfo* s_getMapPolygonVertexXMethod = nullptr;
+    static const ::MethodInfo* s_getMapPolygonVertexYMethod = nullptr;
+    static const ::MethodInfo* s_getNewResMethod = nullptr;
+    static const ::MethodInfo* s_getMapNodesResMethod = nullptr;
+    static const ::MethodInfo* s_getBoundaryMethod = nullptr;
+    static const ::MethodInfo* s_getMapBlockMgrMethod = nullptr;
+    static const ::MethodInfo* s_getBlockGroupsMethod = nullptr;
+    static const ::MethodInfo* s_getBlockPointsMethod = nullptr;
+    static const ::MethodInfo* s_getBlockPointPositionMethod = nullptr;
+    static const ::MethodInfo* s_findObjectOfTypeMethod = nullptr;
+    static const ::MethodInfo* s_findObjectsOfTypeAllMethod = nullptr;
+    static const ::MethodInfo* s_getNavmeshRawDataMethod = nullptr;
+    static const ::MethodInfo* s_getLevelBoundMethod = nullptr;
+
+    if (!s_fixLevelAssetClass) {
+        s_fixLevelAssetClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "FixLevelAsset", "FrameEngine.Common.FixLevelAsset");
+        LOG(LOG_LEVEL_INFO, "[Terrain] FixLevelAsset klass=%p", s_fixLevelAssetClass);
+    }
+    if (!s_dataConfigClass) {
+        s_dataConfigClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "DataConfig", "FrameEngine.DataConfig");
+        LOG(LOG_LEVEL_INFO, "[Terrain] DataConfig klass=%p", s_dataConfigClass);
+    }
+    if (!s_battleLevelDCClass) {
+        s_battleLevelDCClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleLevel_DC", "FrameEngine.Interface.BattleLevel_DC");
+        LOG(LOG_LEVEL_INFO, "[Terrain] BattleLevel_DC klass=%p", s_battleLevelDCClass);
+    }
+    if (!s_battleMapDCClass) {
+        s_battleMapDCClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "BattleMap_DC", "FrameEngine.Interface.BattleMap_DC");
+        LOG(LOG_LEVEL_INFO, "[Terrain] BattleMap_DC klass=%p", s_battleMapDCClass);
+    }
+    if (!s_matchBattleModeResObjectClass) {
+        s_matchBattleModeResObjectClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MatchBattleModeResObject", "FrameEngine.Common.MatchBattleModeResObject");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MatchBattleModeResObject klass=%p", s_matchBattleModeResObjectClass);
+    }
+    if (!s_mapDataProxyClass) {
+        s_mapDataProxyClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapDataProxy", "FrameEngine.Logic.MapDataProxy");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapDataProxy klass=%p", s_mapDataProxyClass);
+    }
+    if (!s_mapDataSetClass) {
+        s_mapDataSetClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapDataSet", "FrameEngine.Logic.MapDataSet");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapDataSet klass=%p", s_mapDataSetClass);
+    }
+    if (!s_mapResObjectClass) {
+        s_mapResObjectClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapResObject", "FrameEngine.Common.MapResObject");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapResObject klass=%p", s_mapResObjectClass);
+    }
+    if (!s_mapInfoPointDataClass) {
+        s_mapInfoPointDataClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapInfoPointData", "FrameEngine.Common.MapInfoPointData");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapInfoPointData klass=%p", s_mapInfoPointDataClass);
+    }
+    if (!s_mapInfoPolylineClass) {
+        s_mapInfoPolylineClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapInfoPolyline", "FrameEngine.Common.MapInfoPolyline");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapInfoPolyline klass=%p", s_mapInfoPolylineClass);
+    }
+    if (!s_mapPolygonVertexClass) {
+        s_mapPolygonVertexClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapPolygonVertex", "FrameEngine.Common.MapPolygonVertex");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapPolygonVertex klass=%p", s_mapPolygonVertexClass);
+    }
+    if (!s_mapBlockAnchorDataClass) {
+        s_mapBlockAnchorDataClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapBlockAnchorData", "FrameEngine.Common.MapBlockAnchorData");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapBlockAnchorData klass=%p", s_mapBlockAnchorDataClass);
+    }
+    if (!s_mapBlockGroupDataClass) {
+        s_mapBlockGroupDataClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapBlockGroupData", "FrameEngine.Common.MapBlockGroupData");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapBlockGroupData klass=%p", s_mapBlockGroupDataClass);
+    }
+    if (!s_mapBlockPointDataClass) {
+        s_mapBlockPointDataClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "Assembly-CSharp.dll",
+                "MapBlockPointData", "FrameEngine.Common.MapBlockPointData");
+        LOG(LOG_LEVEL_INFO, "[Terrain] MapBlockPointData klass=%p", s_mapBlockPointDataClass);
+    }
+    if (!s_unityObjectClass) {
+        s_unityObjectClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "UnityEngine.CoreModule.dll",
+                "Object", "UnityEngine.Object");
+        LOG(LOG_LEVEL_INFO, "[Terrain] UnityEngine.Object klass=%p", s_unityObjectClass);
+    }
+    if (!s_unityResourcesClass) {
+        s_unityResourcesClass = m_pfunctionInfo->FindClassByName(
+                "ilbil2cpp.so", "UnityEngine.CoreModule.dll",
+                "Resources", "UnityEngine.Resources");
+        LOG(LOG_LEVEL_INFO, "[Terrain] UnityEngine.Resources klass=%p", s_unityResourcesClass);
+    }
+
+    if (!s_fixLevelAssetClass || !s_dataConfigClass || !s_battleLevelDCClass || !s_battleMapDCClass ||
+        !s_matchBattleModeResObjectClass || !s_mapDataProxyClass || !s_mapDataSetClass ||
+        !s_mapBlockAnchorDataClass || !s_mapBlockGroupDataClass || !s_mapBlockPointDataClass ||
+        !s_unityObjectClass || !s_unityResourcesClass) {
+        LOG(LOG_LEVEL_ERROR, "[Terrain] 关键类解析失败 FixLevelAsset=%p DataConfig=%p BattleLevelDC=%p BattleMapDC=%p MatchBattleModeResObject=%p MapDataProxy=%p MapDataSet=%p MapBlockAnchorData=%p MapBlockGroupData=%p MapBlockPointData=%p Object=%p Resources=%p",
+            s_fixLevelAssetClass, s_dataConfigClass, s_battleLevelDCClass, s_battleMapDCClass,
+            s_matchBattleModeResObjectClass, s_mapDataProxyClass, s_mapDataSetClass,
+            s_mapBlockAnchorDataClass, s_mapBlockGroupDataClass, s_mapBlockPointDataClass,
+            s_unityObjectClass, s_unityResourcesClass);
+        return false;
+    }
+
+    if (!s_getConfigMethod) {
+        s_getConfigMethod = findMethodInfoByClass(s_dataConfigClass, "get_config", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve DataConfig.get_config=%p", (void*)s_getConfigMethod);
+    }
+    if (!s_getBattleLevelDCMethod) {
+        s_getBattleLevelDCMethod = findMethodInfoByClass(s_dataConfigClass, "get_battleLevelDC", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve DataConfig.get_battleLevelDC=%p", (void*)s_getBattleLevelDCMethod);
+    }
+    if (!s_getBattleMapDCMethod) {
+        s_getBattleMapDCMethod = findMethodInfoByClass(s_dataConfigClass, "get_battleMapDC", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve DataConfig.get_battleMapDC=%p", (void*)s_getBattleMapDCMethod);
+    }
+    if (!s_getMapDataProxyMethod) {
+        s_getMapDataProxyMethod = findMethodInfoByClass(s_dataConfigClass, "get_mapDataProxy", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve DataConfig.get_mapDataProxy=%p", (void*)s_getMapDataProxyMethod);
+    }
+    if (!s_getMapTypeMethod) {
+        s_getMapTypeMethod = findMethodInfoByClass(s_mapDataProxyClass, "get_mapType", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapDataProxy.get_mapType=%p", (void*)s_getMapTypeMethod);
+    }
+    if (!s_getMapDataSetsMethod) {
+        s_getMapDataSetsMethod = findMethodInfoByClass(s_mapDataProxyClass, "get_mapDataSets", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapDataProxy.get_mapDataSets=%p", (void*)s_getMapDataSetsMethod);
+    }
+    if (!s_getMapDCMethod) {
+        s_getMapDCMethod = findMethodInfoByClass(s_mapDataProxyClass, "GetMapDC", 1);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapDataProxy.GetMapDC=%p", (void*)s_getMapDCMethod);
+    }
+    if (!s_getMapDataSetDCMethod) {
+        s_getMapDataSetDCMethod = findMethodInfoByClass(s_mapDataSetClass, "get__DC", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapDataSet.get__DC=%p", (void*)s_getMapDataSetDCMethod);
+    }
+    if (!s_getMapDataSetMapNodesResMethod) {
+        s_getMapDataSetMapNodesResMethod = findMethodInfoByClass(s_mapDataSetClass, "get_mapNodesRes", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapDataSet.get_mapNodesRes=%p", (void*)s_getMapDataSetMapNodesResMethod);
+    }
+    if (!s_getMapDataSetMapResMethod) {
+        s_getMapDataSetMapResMethod = findMethodInfoByClass(s_mapDataSetClass, "get_mapRes", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapDataSet.get_mapRes=%p", (void*)s_getMapDataSetMapResMethod);
+    }
+    if (!s_getMapResInfoPointDataMethod && s_mapResObjectClass) {
+        s_getMapResInfoPointDataMethod = findMethodInfoByClass(s_mapResObjectClass, "get_infoPointData", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapResObject.get_infoPointData=%p", (void*)s_getMapResInfoPointDataMethod);
+    }
+    if (!s_getInfoPointDataPolygonsMethod && s_mapInfoPointDataClass) {
+        s_getInfoPointDataPolygonsMethod = findMethodInfoByClass(s_mapInfoPointDataClass, "get_polygons", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapInfoPointData.get_polygons=%p", (void*)s_getInfoPointDataPolygonsMethod);
+    }
+    if (!s_getInfoPointDataPolylinesMethod && s_mapInfoPointDataClass) {
+        s_getInfoPointDataPolylinesMethod = findMethodInfoByClass(s_mapInfoPointDataClass, "get_polylines", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapInfoPointData.get_polylines=%p", (void*)s_getInfoPointDataPolylinesMethod);
+    }
+    if (!s_getInfoPolylineVerticesMethod && s_mapInfoPolylineClass) {
+        s_getInfoPolylineVerticesMethod = findMethodInfoByClass(s_mapInfoPolylineClass, "get_vertices", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapInfoPolyline.get_vertices=%p", (void*)s_getInfoPolylineVerticesMethod);
+    }
+    if (!s_getMapPolygonVertexXMethod && s_mapPolygonVertexClass) {
+        s_getMapPolygonVertexXMethod = findMethodInfoByClass(s_mapPolygonVertexClass, "get_x", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapPolygonVertex.get_x=%p", (void*)s_getMapPolygonVertexXMethod);
+    }
+    if (!s_getMapPolygonVertexYMethod && s_mapPolygonVertexClass) {
+        s_getMapPolygonVertexYMethod = findMethodInfoByClass(s_mapPolygonVertexClass, "get_y", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapPolygonVertex.get_y=%p", (void*)s_getMapPolygonVertexYMethod);
+    }
+    if (!s_getNewResMethod) {
+        s_getNewResMethod = findMethodInfoByClass(s_battleLevelDCClass, "get_newRes", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve BattleLevel_DC.get_newRes=%p", (void*)s_getNewResMethod);
+    }
+    if (!s_getMapNodesResMethod) {
+        s_getMapNodesResMethod = findMethodInfoByClass(s_battleMapDCClass, "get_mapNodesRes", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve BattleMap_DC.get_mapNodesRes=%p", (void*)s_getMapNodesResMethod);
+    }
+    if (!s_getBoundaryMethod) {
+        s_getBoundaryMethod = findMethodInfoByClass(s_mapDataProxyClass, "get_boundary", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapDataProxy.get_boundary=%p", (void*)s_getBoundaryMethod);
+    }
+    if (!s_getMapBlockMgrMethod) {
+        s_getMapBlockMgrMethod = findMethodInfoByClass(s_battleMapDCClass, "get_mapBlockMgr", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve BattleMap_DC.get_mapBlockMgr=%p", (void*)s_getMapBlockMgrMethod);
+    }
+    if (!s_getBlockGroupsMethod) {
+        s_getBlockGroupsMethod = findMethodInfoByClass(s_mapBlockAnchorDataClass, "get_blockGroups", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapBlockAnchorData.get_blockGroups=%p", (void*)s_getBlockGroupsMethod);
+    }
+    if (!s_getBlockPointsMethod) {
+        s_getBlockPointsMethod = findMethodInfoByClass(s_mapBlockGroupDataClass, "get_blockPoints", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapBlockGroupData.get_blockPoints=%p", (void*)s_getBlockPointsMethod);
+    }
+    if (!s_getBlockPointPositionMethod) {
+        s_getBlockPointPositionMethod = findMethodInfoByClass(s_mapBlockPointDataClass, "get_position", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve MapBlockPointData.get_position=%p", (void*)s_getBlockPointPositionMethod);
+    }
+
+    if (!s_findObjectOfTypeMethod) {
+        s_findObjectOfTypeMethod = findMethodInfoByClass(s_unityObjectClass, "FindObjectOfType", 1);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve UnityEngine.Object.FindObjectOfType=%p", (void*)s_findObjectOfTypeMethod);
+    }
+    if (!s_findObjectsOfTypeAllMethod) {
+        s_findObjectsOfTypeAllMethod = findMethodInfoByClass(s_unityResourcesClass, "FindObjectsOfTypeAll", 1);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve UnityEngine.Resources.FindObjectsOfTypeAll=%p", (void*)s_findObjectsOfTypeAllMethod);
+    }
+    if (!s_getNavmeshRawDataMethod) {
+        s_getNavmeshRawDataMethod = findMethodInfoByClass(s_fixLevelAssetClass, "GetNavmeshRawData", 0);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve FixLevelAsset.GetNavmeshRawData=%p", (void*)s_getNavmeshRawDataMethod);
+    }
+    if (!s_getLevelBoundMethod) {
+        s_getLevelBoundMethod = findMethodInfoByClass(s_fixLevelAssetClass, "GetLevelBound", 2);
+        LOG(LOG_LEVEL_INFO, "[Terrain] resolve FixLevelAsset.GetLevelBound=%p", (void*)s_getLevelBoundMethod);
+    }
+
+    if (!s_findObjectOfTypeMethod || !s_findObjectsOfTypeAllMethod || !s_getNavmeshRawDataMethod || !s_getLevelBoundMethod) {
+        LOG(LOG_LEVEL_ERROR, "[Terrain] 关键方法解析失败 find=%p findAll=%p navmesh=%p bound=%p",
+            (void*)s_findObjectOfTypeMethod,
+            (void*)s_findObjectsOfTypeAllMethod,
+            (void*)s_getNavmeshRawDataMethod,
+            (void*)s_getLevelBoundMethod);
+        return false;
+    }
+
+    auto* fixLevelAssetType = m_pfunctionInfo->il2cpp_type_get_object(
+            m_pfunctionInfo->il2cpp_class_get_type(s_fixLevelAssetClass));
+    if (!fixLevelAssetType) {
+        LOG(LOG_LEVEL_ERROR, "[Terrain] FixLevelAsset Type 对象获取失败");
+        return false;
+    }
+
+    auto invokeManaged = [&](const ::MethodInfo* method, void* instance, void** params, const char* tag) -> ::Il2CppObject* {
+        ::Il2CppException* exception = nullptr;
+        ::Il2CppObject* result = m_pfunctionInfo->il2cpp_runtime_invoke(method, instance, params, &exception);
+        if (exception != nullptr) {
+            LOG(LOG_LEVEL_ERROR, "[Terrain] %s invoke exception=%p", tag, exception);
+            return nullptr;
+        }
+        return result;
+    };
+
+    auto unboxValue = [&](::Il2CppObject* boxedObject, auto& outValue, const char* tag) -> bool {
+        using ValueType = std::decay_t<decltype(outValue)>;
+        if (!boxedObject || !IsReadableMemory(boxedObject, sizeof(::Il2CppObject) + sizeof(ValueType))) {
+            LOG(LOG_LEVEL_WARN, "[Terrain] %s boxedObject=%p 不可读", tag, boxedObject);
+            return false;
+        }
+        std::memcpy(&outValue,
+                    reinterpret_cast<uint8_t*>(boxedObject) + sizeof(::Il2CppObject),
+                    sizeof(ValueType));
+        return true;
+    };
+
+    auto pointsApproximatelyEqual = [](const UnityVector3& lhs, const UnityVector3& rhs) {
+        return std::fabs(lhs.x - rhs.x) <= 0.01f && std::fabs(lhs.z - rhs.z) <= 0.01f;
+    };
+
+    auto computePolygonArea = [](const TerrainPolygon& polygon) {
+        if (polygon.points.size() < 3) {
+            return 0.0f;
+        }
+
+        double twiceArea = 0.0;
+        for (size_t index = 0; index < polygon.points.size(); ++index) {
+            const auto& current = polygon.points[index];
+            const auto& next = polygon.points[(index + 1) % polygon.points.size()];
+            twiceArea += static_cast<double>(current.x) * static_cast<double>(next.z) -
+                         static_cast<double>(next.x) * static_cast<double>(current.z);
+        }
+        return static_cast<float>(std::fabs(twiceArea * 0.5));
+    };
+
+    auto readMapInfoShapePolygon = [&](::Il2CppObject* shapeObject, const char* polygonType, const char* shapeTag, size_t shapeIndex, bool requireClosed) {
+        TerrainPolygon polygon{};
+        polygon.polygonType = polygonType;
+
+        if (!shapeObject || !s_getInfoPolylineVerticesMethod) {
+            return polygon;
+        }
+
+        ::Il2CppObject* verticesObject = invokeManaged(s_getInfoPolylineVerticesMethod, shapeObject, nullptr, "MapInfoPolyline.get_vertices");
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s[%zu].vertices=%p type=%s",
+            shapeTag,
+            shapeIndex,
+            verticesObject,
+            verticesObject ? getManagedTypeName(verticesObject).c_str() : "<null>");
+        if (!verticesObject) {
+            return polygon;
+        }
+
+        auto vertices = collectLGameVector<void*>(verticesObject, "[Terrain][mapInfoVertices]");
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s[%zu].vertices count=%zu", shapeTag, shapeIndex, vertices.size());
+        polygon.points.reserve(vertices.size());
+
+        for (size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex) {
+            auto* vertexObject = reinterpret_cast<::Il2CppObject*>(vertices[vertexIndex]);
+            if (!vertexObject) {
+                if (vertexIndex < 6) {
+                    LOG(LOG_LEVEL_INFO, "[Terrain] %s[%zu].vertex[%zu]=<null>", shapeTag, shapeIndex, vertexIndex);
+                }
+                continue;
+            }
+
+            FrameEngine_Common_Fix64_Fields rawX{};
+            FrameEngine_Common_Fix64_Fields rawY{};
+            bool hasX = false;
+            bool hasY = false;
+            if (s_getMapPolygonVertexXMethod) {
+                ::Il2CppObject* xObject = invokeManaged(s_getMapPolygonVertexXMethod, vertexObject, nullptr, "MapPolygonVertex.get_x");
+                hasX = unboxValue(xObject, rawX, "MapPolygonVertex.get_x");
+            }
+            if (s_getMapPolygonVertexYMethod) {
+                ::Il2CppObject* yObject = invokeManaged(s_getMapPolygonVertexYMethod, vertexObject, nullptr, "MapPolygonVertex.get_y");
+                hasY = unboxValue(yObject, rawY, "MapPolygonVertex.get_y");
+            }
+
+            if (vertexIndex < 6) {
+                LOG(LOG_LEVEL_INFO, "[Terrain] %s[%zu].vertex[%zu]=%p type=%s x=%s%.3f y=%s%.3f",
+                    shapeTag,
+                    shapeIndex,
+                    vertexIndex,
+                    vertexObject,
+                    getManagedTypeName(vertexObject).c_str(),
+                    hasX ? "" : "<invalid>",
+                    hasX ? DecoderFix64(static_cast<uint64_t>(rawX.rawValue)) : 0.0f,
+                    hasY ? "" : "<invalid>",
+                    hasY ? DecoderFix64(static_cast<uint64_t>(rawY.rawValue)) : 0.0f);
+            }
+
+            if (!hasX || !hasY) {
+                continue;
+            }
+
+            polygon.points.push_back(UnityVector3{
+                DecoderFix64(static_cast<uint64_t>(rawX.rawValue)),
+                0.0f,
+                DecoderFix64(static_cast<uint64_t>(rawY.rawValue))
+            });
+        }
+
+        bool hadExplicitClosure = polygon.points.size() >= 2 &&
+                                  pointsApproximatelyEqual(polygon.points.front(), polygon.points.back());
+        if (hadExplicitClosure) {
+            polygon.points.pop_back();
+        }
+
+        if (requireClosed && polygon.points.size() >= 3) {
+            if (!hadExplicitClosure) {
+                LOG(LOG_LEVEL_INFO, "[Terrain] %s[%zu] 非闭合 polyline，跳过 polygon 转换", shapeTag, shapeIndex);
+                polygon.points.clear();
+            }
+        }
+
+        if (polygon.points.size() < 3) {
+            polygon.points.clear();
+        }
+
+        return polygon;
+    };
+
+    auto collectMapInfoShapePolygons = [&](::Il2CppObject* vectorObject, const char* polygonType, const char* shapeTag, bool requireClosed) {
+        std::vector<TerrainPolygon> polygons;
+        if (!vectorObject) {
+            return polygons;
+        }
+
+        auto shapes = collectLGameVector<void*>(vectorObject, shapeTag);
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s count=%zu", shapeTag, shapes.size());
+        polygons.reserve(shapes.size());
+        for (size_t shapeIndex = 0; shapeIndex < shapes.size(); ++shapeIndex) {
+            auto* shapeObject = reinterpret_cast<::Il2CppObject*>(shapes[shapeIndex]);
+            if (shapeIndex < 4) {
+                LOG(LOG_LEVEL_INFO, "[Terrain] %s[%zu]=%p type=%s",
+                    shapeTag,
+                    shapeIndex,
+                    shapeObject,
+                    shapeObject ? getManagedTypeName(shapeObject).c_str() : "<null>");
+            }
+
+            TerrainPolygon polygon = readMapInfoShapePolygon(shapeObject, polygonType, shapeTag, shapeIndex, requireClosed);
+            if (!polygon.points.empty()) {
+                polygons.push_back(std::move(polygon));
+            }
+        }
+
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s usable polygons=%zu", shapeTag, polygons.size());
+        return polygons;
+    };
+
+    auto absorbMapInfoPolygons = [&](std::vector<TerrainPolygon>&& polygons, const char* tag) {
+        if (polygons.empty()) {
+            return false;
+        }
+
+        size_t boundIndex = SIZE_MAX;
+        if (m_terrainData.boundPolygon.points.empty()) {
+            float bestArea = 0.0f;
+            for (size_t index = 0; index < polygons.size(); ++index) {
+                float area = computePolygonArea(polygons[index]);
+                if (area > bestArea) {
+                    bestArea = area;
+                    boundIndex = index;
+                }
+            }
+        }
+
+        for (size_t index = 0; index < polygons.size(); ++index) {
+            if (index == boundIndex) {
+                LOG(LOG_LEVEL_INFO, "[Terrain] %s bound candidate area=%.3f points=%zu",
+                    tag,
+                    computePolygonArea(polygons[index]),
+                    polygons[index].points.size());
+                polygons[index].polygonType = "bound";
+                m_terrainData.boundPolygon = std::move(polygons[index]);
+                continue;
+            }
+
+            LOG(LOG_LEVEL_INFO, "[Terrain] %s obstacle candidate area=%.3f points=%zu",
+                tag,
+                computePolygonArea(polygons[index]),
+                polygons[index].points.size());
+            polygons[index].polygonType = "obstacle";
+            m_terrainData.obstaclePolygons.push_back(std::move(polygons[index]));
+        }
+
+        return true;
+    };
+
+    auto buildBoundFromRect = [&](const FixRectFix64Raw& rect, const char* tag) {
+        TerrainPolygon bound{};
+        bound.polygonType = "bound";
+
+        const float x = DecoderFix64(static_cast<uint64_t>(rect.x.rawValue));
+        const float z = DecoderFix64(static_cast<uint64_t>(rect.y.rawValue));
+        const float w = DecoderFix64(static_cast<uint64_t>(rect.w.rawValue));
+        const float h = DecoderFix64(static_cast<uint64_t>(rect.h.rawValue));
+
+        if (std::fabs(w) <= 0.001f || std::fabs(h) <= 0.001f) {
+            LOG(LOG_LEVEL_WARN, "[Terrain] %s rect 无效，忽略零面积边界: (%.3f, %.3f, %.3f, %.3f)", tag, x, z, w, h);
+            return bound;
+        }
+
+        bound.points = {
+            UnityVector3{ x, 0.0f, z },
+            UnityVector3{ x + w, 0.0f, z },
+            UnityVector3{ x + w, 0.0f, z + h },
+            UnityVector3{ x, 0.0f, z + h }
+        };
+        LOG(LOG_LEVEL_INFO, "[Terrain] %s rect=(%.3f, %.3f, %.3f, %.3f)", tag, x, z, w, h);
+        return bound;
+    };
+
+    ::Il2CppObject* dataConfig = nullptr;
+    ::Il2CppObject* battleLevelDC = nullptr;
+    ::Il2CppObject* battleMapDC = nullptr;
+    ::Il2CppObject* mapDataProxy = nullptr;
+    int32_t immersiveMapID = -1;
+    int32_t mapType = -1;
+    std::string aiMapDataCfg;
+    std::vector<::Il2CppObject*> battleMapDCCandidates;
+    bool loadedFromMapInfo = false;
+
+    auto pushUniqueBattleMapDC = [&](::Il2CppObject* candidate) {
+        if (!candidate) return;
+        for (auto* existing : battleMapDCCandidates) {
+            if (existing == candidate) return;
+        }
+        battleMapDCCandidates.push_back(candidate);
+    };
+
+    auto pushUniqueIndex = [](std::vector<int32_t>& indices, int32_t value) {
+        if (value < 0) return;
+        for (int32_t existing : indices) {
+            if (existing == value) return;
+        }
+        indices.push_back(value);
+    };
+
+    static uint32_t s_immersiveMapIDOffset = INVALID_OFFSET;
+    static uint32_t s_aiMapDataCfgOffset = INVALID_OFFSET;
+
+    if (s_getConfigMethod && s_getBattleLevelDCMethod && s_getBattleMapDCMethod) {
+        dataConfig = invokeManaged(s_getConfigMethod, nullptr, nullptr, "DataConfig.get_config");
+        LOG(LOG_LEVEL_INFO, "[Terrain] dataConfig=%p type=%s",
+            dataConfig,
+            dataConfig ? getManagedTypeName(dataConfig).c_str() : "<null>");
+
+        if (dataConfig) {
+            battleLevelDC = invokeManaged(s_getBattleLevelDCMethod, dataConfig, nullptr, "DataConfig.get_battleLevelDC");
+            LOG(LOG_LEVEL_INFO, "[Terrain] battleLevelDC=%p type=%s",
+                battleLevelDC,
+                battleLevelDC ? getManagedTypeName(battleLevelDC).c_str() : "<null>");
+
+            if (battleLevelDC && s_getNewResMethod) {
+                ::Il2CppObject* newRes = invokeManaged(s_getNewResMethod, battleLevelDC, nullptr, "BattleLevel_DC.get_newRes");
+                LOG(LOG_LEVEL_INFO, "[Terrain] battleLevelDC.newRes=%p type=%s native=%p",
+                    newRes,
+                    newRes ? getManagedTypeName(newRes).c_str() : "<null>",
+                    newRes ? ReadMemberPtr(newRes, 0x10) : nullptr);
+
+                if (newRes) {
+                    if (s_immersiveMapIDOffset == INVALID_OFFSET) {
+                        s_immersiveMapIDOffset = GetFieldOffsetFromKlass(s_matchBattleModeResObjectClass, "iImmersiveMapID");
+                        LOG(LOG_LEVEL_INFO, "[Terrain] MatchBattleModeResObject.iImmersiveMapID offset=0x%x", s_immersiveMapIDOffset);
+                    }
+                    if (s_aiMapDataCfgOffset == INVALID_OFFSET) {
+                        s_aiMapDataCfgOffset = GetFieldOffsetFromKlass(s_matchBattleModeResObjectClass, "szAiMapDataCfg");
+                        LOG(LOG_LEVEL_INFO, "[Terrain] MatchBattleModeResObject.szAiMapDataCfg offset=0x%x", s_aiMapDataCfgOffset);
+                    }
+
+                    if (s_immersiveMapIDOffset != INVALID_OFFSET && IsReadableMemory(reinterpret_cast<uint8_t*>(newRes) + s_immersiveMapIDOffset, sizeof(int32_t))) {
+                        immersiveMapID = ReadMemberValue<int32_t>(newRes, s_immersiveMapIDOffset);
+                    }
+                    if (s_aiMapDataCfgOffset != INVALID_OFFSET) {
+                        void* aiMapDataCfgObject = ReadMemberPtr(newRes, s_aiMapDataCfgOffset);
+                        aiMapDataCfg = readIl2CppString(aiMapDataCfgObject);
+                    }
+
+                    LOG(LOG_LEVEL_INFO, "[Terrain] newRes map fields: iImmersiveMapID=%d szAiMapDataCfg=%s",
+                        immersiveMapID,
+                        aiMapDataCfg.empty() ? "<empty>" : aiMapDataCfg.c_str());
+                }
+            }
+
+            battleMapDC = invokeManaged(s_getBattleMapDCMethod, dataConfig, nullptr, "DataConfig.get_battleMapDC");
+            LOG(LOG_LEVEL_INFO, "[Terrain] battleMapDC=%p type=%s",
+                battleMapDC,
+                battleMapDC ? getManagedTypeName(battleMapDC).c_str() : "<null>");
+
+            if (s_getMapDataProxyMethod) {
+                mapDataProxy = invokeManaged(s_getMapDataProxyMethod, dataConfig, nullptr, "DataConfig.get_mapDataProxy");
+                LOG(LOG_LEVEL_INFO, "[Terrain] mapDataProxy=%p type=%s",
+                    mapDataProxy,
+                    mapDataProxy ? getManagedTypeName(mapDataProxy).c_str() : "<null>");
+            }
+
+            if (mapDataProxy && s_getMapTypeMethod) {
+                ::Il2CppObject* mapTypeObject = invokeManaged(s_getMapTypeMethod, mapDataProxy, nullptr, "MapDataProxy.get_mapType");
+                if (unboxValue(mapTypeObject, mapType, "MapDataProxy.get_mapType")) {
+                    LOG(LOG_LEVEL_INFO, "[Terrain] mapDataProxy.mapType=%d", mapType);
+                }
+            }
+
+            std::vector<int32_t> candidateIndices;
+            size_t mapDataSetCount = 0;
+            if (mapDataProxy && s_getMapDataSetsMethod) {
+                ::Il2CppObject* mapDataSets = invokeManaged(s_getMapDataSetsMethod, mapDataProxy, nullptr, "MapDataProxy.get_mapDataSets");
+                LOG(LOG_LEVEL_INFO, "[Terrain] mapDataProxy.mapDataSets=%p type=%s",
+                    mapDataSets,
+                    mapDataSets ? getManagedTypeName(mapDataSets).c_str() : "<null>");
+                if (mapDataSets) {
+                    auto dataSets = collectLGameVector<void*>(mapDataSets, "[Terrain][mapDataSets]");
+                    mapDataSetCount = dataSets.size();
+                    LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSets count=%zu", mapDataSetCount);
+
+                    for (size_t index = 0; index < dataSets.size(); ++index) {
+                        auto* mapDataSetObject = reinterpret_cast<::Il2CppObject*>(dataSets[index]);
+                        LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSet[%zu]=%p type=%s",
+                            index,
+                            mapDataSetObject,
+                            mapDataSetObject ? getManagedTypeName(mapDataSetObject).c_str() : "<null>");
+
+                        if (!mapDataSetObject) {
+                            continue;
+                        }
+
+                        if (s_getMapDataSetDCMethod) {
+                            ::Il2CppObject* mapDataSetDC = invokeManaged(s_getMapDataSetDCMethod, mapDataSetObject, nullptr, "MapDataSet.get__DC");
+                            LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSet[%zu].DC=%p type=%s",
+                                index,
+                                mapDataSetDC,
+                                mapDataSetDC ? getManagedTypeName(mapDataSetDC).c_str() : "<null>");
+                            pushUniqueBattleMapDC(mapDataSetDC);
+                        }
+
+                        if (s_getMapDataSetMapNodesResMethod) {
+                            ::Il2CppObject* mapDataSetNodesRes = invokeManaged(s_getMapDataSetMapNodesResMethod, mapDataSetObject, nullptr, "MapDataSet.get_mapNodesRes");
+                            LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSet[%zu].mapNodesRes=%p type=%s",
+                                index,
+                                mapDataSetNodesRes,
+                                mapDataSetNodesRes ? getManagedTypeName(mapDataSetNodesRes).c_str() : "<null>");
+                            if (mapDataSetNodesRes) {
+                                auto dataSetNodes = collectLGameVector<void*>(mapDataSetNodesRes, "[Terrain][mapDataSetNodesRes]");
+                                LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSet[%zu].mapNodesRes count=%zu",
+                                    index,
+                                    dataSetNodes.size());
+                            }
+                        }
+
+                        if (s_getMapDataSetMapResMethod) {
+                            ::Il2CppObject* mapDataSetMapRes = invokeManaged(s_getMapDataSetMapResMethod, mapDataSetObject, nullptr, "MapDataSet.get_mapRes");
+                            LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSet[%zu].mapRes=%p type=%s native=%p",
+                                index,
+                                mapDataSetMapRes,
+                                mapDataSetMapRes ? getManagedTypeName(mapDataSetMapRes).c_str() : "<null>",
+                                mapDataSetMapRes ? ReadMemberPtr(mapDataSetMapRes, 0x10) : nullptr);
+
+                            if (mapDataSetMapRes && s_getMapResInfoPointDataMethod) {
+                                ::Il2CppObject* infoPointData = invokeManaged(s_getMapResInfoPointDataMethod, mapDataSetMapRes, nullptr, "MapResObject.get_infoPointData");
+                                LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSet[%zu].mapRes.infoPointData=%p type=%s",
+                                    index,
+                                    infoPointData,
+                                    infoPointData ? getManagedTypeName(infoPointData).c_str() : "<null>");
+
+                                if (infoPointData && s_getInfoPointDataPolygonsMethod) {
+                                    ::Il2CppObject* polygonsObject = invokeManaged(s_getInfoPointDataPolygonsMethod, infoPointData, nullptr, "MapInfoPointData.get_polygons");
+                                    LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSet[%zu].infoPointData.polygons=%p type=%s",
+                                        index,
+                                        polygonsObject,
+                                        polygonsObject ? getManagedTypeName(polygonsObject).c_str() : "<null>");
+                                    loadedFromMapInfo |= absorbMapInfoPolygons(
+                                        collectMapInfoShapePolygons(polygonsObject, "obstacle", "[Terrain][infoPolygons]", false),
+                                        "[Terrain][infoPolygons]");
+                                }
+
+                                if (infoPointData && s_getInfoPointDataPolylinesMethod) {
+                                    ::Il2CppObject* polylinesObject = invokeManaged(s_getInfoPointDataPolylinesMethod, infoPointData, nullptr, "MapInfoPointData.get_polylines");
+                                    LOG(LOG_LEVEL_INFO, "[Terrain] mapDataSet[%zu].infoPointData.polylines=%p type=%s",
+                                        index,
+                                        polylinesObject,
+                                        polylinesObject ? getManagedTypeName(polylinesObject).c_str() : "<null>");
+                                    loadedFromMapInfo |= absorbMapInfoPolygons(
+                                        collectMapInfoShapePolygons(polylinesObject, "obstacle", "[Terrain][infoPolylines]", true),
+                                        "[Terrain][infoPolylines]");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (mapType == 2) {
+                pushUniqueIndex(candidateIndices, immersiveMapID);
+                if (immersiveMapID > 0) {
+                    pushUniqueIndex(candidateIndices, immersiveMapID - 1);
+                }
+                pushUniqueIndex(candidateIndices, 0);
+                for (size_t index = 0; index < mapDataSetCount; ++index) {
+                    pushUniqueIndex(candidateIndices, static_cast<int32_t>(index));
+                }
+            } else if (mapType == 1) {
+                pushUniqueIndex(candidateIndices, 0);
+            }
+
+            if (mapDataProxy && s_getMapDCMethod) {
+                for (size_t candidateOrder = 0; candidateOrder < candidateIndices.size(); ++candidateOrder) {
+                    int32_t candidateIndex = candidateIndices[candidateOrder];
+                    void* mapDCArgs[1] = { &candidateIndex };
+                    ::Il2CppObject* candidateMapDC = invokeManaged(s_getMapDCMethod, mapDataProxy, mapDCArgs, "MapDataProxy.GetMapDC");
+                    LOG(LOG_LEVEL_INFO, "[Terrain] MapDataProxy.GetMapDC(%d)=%p type=%s",
+                        candidateIndex,
+                        candidateMapDC,
+                        candidateMapDC ? getManagedTypeName(candidateMapDC).c_str() : "<null>");
+                    pushUniqueBattleMapDC(candidateMapDC);
+                }
+            }
+
+            pushUniqueBattleMapDC(battleMapDC);
+            LOG(LOG_LEVEL_INFO, "[Terrain] battleMapDC candidates=%zu", battleMapDCCandidates.size());
+
+            if (battleMapDC && s_getMapNodesResMethod) {
+                ::Il2CppObject* mapNodesRes = invokeManaged(s_getMapNodesResMethod, battleMapDC, nullptr, "BattleMap_DC.get_mapNodesRes");
+                LOG(LOG_LEVEL_INFO, "[Terrain] battleMapDC.mapNodesRes=%p type=%s",
+                    mapNodesRes,
+                    mapNodesRes ? getManagedTypeName(mapNodesRes).c_str() : "<null>");
+                if (mapNodesRes) {
+                    auto mapConfigEntries = collectLGameVector<void*>(mapNodesRes, "[Terrain][mapNodesRes]");
+                    LOG(LOG_LEVEL_INFO, "[Terrain] battleMapDC.mapNodesRes count=%zu", mapConfigEntries.size());
+                    for (size_t index = 0; index < mapConfigEntries.size() && index < 4; ++index) {
+                        void* entry = mapConfigEntries[index];
+                        LOG(LOG_LEVEL_INFO, "[Terrain] mapConfig[%zu]=%p type=%s native=%p",
+                            index,
+                            entry,
+                            entry ? getManagedTypeName(entry).c_str() : "<null>",
+                            entry ? ReadMemberPtr(entry, 0x10) : nullptr);
+                    }
+                }
+            }
+        }
+    }
+
+    auto tryLoadTerrainFromMapProxy = [&](::Il2CppObject* mapDataProxyObject, ::Il2CppObject* battleMapDCObject) {
+        bool loaded = false;
+
+        if (mapDataProxyObject && s_getBoundaryMethod) {
+            FixRectFix64Raw boundaryRect{};
+            ::Il2CppObject* boundaryObject = invokeManaged(s_getBoundaryMethod, mapDataProxyObject, nullptr, "MapDataProxy.get_boundary");
+            if (unboxValue(boundaryObject, boundaryRect, "MapDataProxy.get_boundary") && m_terrainData.boundPolygon.points.empty()) {
+                m_terrainData.boundPolygon = buildBoundFromRect(boundaryRect, "[Terrain][mapProxyBoundary]");
+                loaded = !m_terrainData.boundPolygon.points.empty();
+            }
+        }
+
+        if (battleMapDCObject && s_getMapBlockMgrMethod && s_getBlockGroupsMethod && s_getBlockPointsMethod && s_getBlockPointPositionMethod) {
+            ::Il2CppObject* mapBlockMgr = invokeManaged(s_getMapBlockMgrMethod, battleMapDCObject, nullptr, "BattleMap_DC.get_mapBlockMgr");
+            LOG(LOG_LEVEL_INFO, "[Terrain] battleMapDC.mapBlockMgr=%p type=%s",
+                mapBlockMgr,
+                mapBlockMgr ? getManagedTypeName(mapBlockMgr).c_str() : "<null>");
+
+            if (mapBlockMgr) {
+                ::Il2CppObject* blockGroups = invokeManaged(s_getBlockGroupsMethod, mapBlockMgr, nullptr, "MapBlockAnchorData.get_blockGroups");
+                LOG(LOG_LEVEL_INFO, "[Terrain] mapBlockMgr.blockGroups=%p type=%s",
+                    blockGroups,
+                    blockGroups ? getManagedTypeName(blockGroups).c_str() : "<null>");
+
+                if (blockGroups) {
+                    auto groups = collectLGameVector<void*>(blockGroups, "[Terrain][blockGroups]");
+                    LOG(LOG_LEVEL_INFO, "[Terrain] blockGroups count=%zu", groups.size());
+                    for (size_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex) {
+                        void* group = groups[groupIndex];
+                        if (!group) continue;
+
+                        ::Il2CppObject* blockPoints = invokeManaged(s_getBlockPointsMethod, group, nullptr, "MapBlockGroupData.get_blockPoints");
+                        if (!blockPoints) continue;
+
+                        auto pointObjects = collectLGameVector<void*>(blockPoints, "[Terrain][blockPoints]");
+                        if (pointObjects.size() < 3) continue;
+
+                        TerrainPolygon polygon{};
+                        polygon.polygonType = "obstacle";
+                        polygon.points.reserve(pointObjects.size());
+
+                        for (void* pointObject : pointObjects) {
+                            if (!pointObject) continue;
+                            FixVector3Raw pointValue{};
+                            ::Il2CppObject* pointPosition = invokeManaged(s_getBlockPointPositionMethod, pointObject, nullptr, "MapBlockPointData.get_position");
+                            if (!unboxValue(pointPosition, pointValue, "MapBlockPointData.get_position")) continue;
+
+                            polygon.points.push_back(UnityVector3{
+                                DecoderFix64(static_cast<uint64_t>(pointValue.x)),
+                                0.0f,
+                                DecoderFix64(static_cast<uint64_t>(pointValue.z))
+                            });
+                        }
+
+                        if (polygon.points.size() >= 3) {
+                            if (groupIndex < 4) {
+                                LOG(LOG_LEVEL_INFO, "[Terrain] blockGroup[%zu] obstacle points=%zu", groupIndex, polygon.points.size());
+                            }
+                            m_terrainData.obstaclePolygons.push_back(std::move(polygon));
+                            loaded = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return loaded;
+    };
+
+    void* findArgs[1] = { fixLevelAssetType };
+    void* fixLevelAsset = invokeManaged(s_findObjectOfTypeMethod, nullptr, findArgs, "FindObjectOfType(FixLevelAsset)");
+    if (!fixLevelAsset) {
+        ::Il2CppObject* allObjects = invokeManaged(s_findObjectsOfTypeAllMethod, nullptr, findArgs, "FindObjectsOfTypeAll(FixLevelAsset)");
+        if (allObjects) {
+            auto objects = readObjectArray(allObjects, "[Terrain][FixLevelAssetAll]", 1);
+            if (!objects.empty()) {
+                fixLevelAsset = objects.front();
+            }
+        }
+    }
+
+    if (!fixLevelAsset || !IsReadableMemory(fixLevelAsset, 0xC0)) {
+        for (size_t index = 0; index < battleMapDCCandidates.size(); ++index) {
+            ::Il2CppObject* candidateBattleMapDC = battleMapDCCandidates[index];
+            LOG(LOG_LEVEL_INFO, "[Terrain] fallback candidate[%zu] battleMapDC=%p type=%s",
+                index,
+                candidateBattleMapDC,
+                candidateBattleMapDC ? getManagedTypeName(candidateBattleMapDC).c_str() : "<null>");
+            if (tryLoadTerrainFromMapProxy(mapDataProxy, candidateBattleMapDC)) {
+                LOG(LOG_LEVEL_INFO,
+                    "[Terrain] fallback(MapDataProxy/MapBlock) 完成，candidate=%zu bound=%zu obstacle=%zu grass=%zu",
+                    index,
+                    m_terrainData.boundPolygon.points.size(),
+                    m_terrainData.obstaclePolygons.size(),
+                    m_terrainData.grassPolygons.size());
+                return !m_terrainData.boundPolygon.points.empty() ||
+                       !m_terrainData.obstaclePolygons.empty() ||
+                       !m_terrainData.grassPolygons.empty();
+            }
+        }
+        if (loadedFromMapInfo || !m_terrainData.boundPolygon.points.empty() || !m_terrainData.obstaclePolygons.empty()) {
+            LOG(LOG_LEVEL_INFO,
+                "[Terrain] fallback(MapRes.infoPointData) 完成，bound=%zu obstacle=%zu grass=%zu",
+                m_terrainData.boundPolygon.points.size(),
+                m_terrainData.obstaclePolygons.size(),
+                m_terrainData.grassPolygons.size());
+            return true;
+        }
+        LOG(LOG_LEVEL_WARN, "[Terrain] FixLevelAsset 实例为空或不可读: %p", fixLevelAsset);
+        return false;
+    }
+    LOG(LOG_LEVEL_INFO, "[Terrain] fixLevelAsset=%p type=%s", fixLevelAsset, getManagedTypeName(fixLevelAsset).c_str());
+
+    ::Il2CppObject* navmeshRaw = invokeManaged(s_getNavmeshRawDataMethod, fixLevelAsset, nullptr, "FixLevelAsset.GetNavmeshRawData");
+    if (!navmeshRaw || !IsReadableMemory(navmeshRaw, 0x78)) {
+        LOG(LOG_LEVEL_WARN, "[Terrain] GetNavmeshRawData 返回空或不可读: %p", navmeshRaw);
+        return false;
+    }
+    LOG(LOG_LEVEL_INFO, "[Terrain] navmeshRaw=%p type=%s", navmeshRaw, getManagedTypeName(navmeshRaw).c_str());
+
+    {
+        FixRectFix64Raw boundAabb{};
+        FixPolygon2DRaw boundPolygon{};
+        void* boundArgs[2] = { &boundAabb, &boundPolygon };
+        invokeManaged(s_getLevelBoundMethod, fixLevelAsset, boundArgs, "FixLevelAsset.GetLevelBound");
+
+        TerrainPolygon bound{};
+        bound.polygonType = "bound";
+        if (boundPolygon.vertices) {
+            bound.points = toUnityPoints(readFixVector2Array(boundPolygon.vertices, "[Terrain][boundPolygon]"), "[Terrain][boundPolygon]");
+        }
+
+        if (bound.points.empty()) {
+            auto vertices3 = readFixVector3Array(ReadMemberPtr(navmeshRaw, 0x18), "[Terrain][navVertices]");
+            auto boundIndices = readIntArray(ReadMemberPtr(navmeshRaw, 0x68), "[Terrain][boundIndices]");
+            std::vector<FixVector2Raw> boundRaw;
+            boundRaw.reserve(boundIndices.size());
+            for (int32_t vertexIndex : boundIndices) {
+                if (vertexIndex < 0 || static_cast<size_t>(vertexIndex) >= vertices3.size()) continue;
+                const auto& vertex = vertices3[static_cast<size_t>(vertexIndex)];
+                boundRaw.push_back(FixVector2Raw{ vertex.x, vertex.z });
+            }
+            bound.points = toUnityPoints(boundRaw, "[Terrain][boundFallback]");
+        }
+
+        if (!bound.points.empty()) {
+            m_terrainData.boundPolygon = std::move(bound);
+        }
+    }
+
+    {
+        auto obstacleObjects = readObjectArray(ReadMemberPtr(navmeshRaw, 0x70), "[Terrain][obstacleObjects]");
+        for (void* obstacleObject : obstacleObjects) {
+            if (!obstacleObject || !IsReadableMemory(obstacleObject, 0x40)) continue;
+            auto polygons = polygonsFromPolygonArray(ReadMemberPtr(obstacleObject, 0x38), "obstacle", "[Terrain][obstaclePolygons]");
+            for (auto& polygon : polygons) {
+                m_terrainData.obstaclePolygons.push_back(std::move(polygon));
+            }
+        }
+    }
+
+    {
+        void* navAsset = ReadMemberPtr(fixLevelAsset, 0x88);
+        if (navAsset && IsReadableMemory(navAsset, 0x178)) {
+            void* grassListObject = ReadMemberPtr(navAsset, 0x120);
+            if (grassListObject && IsReadableMemory(grassListObject, 0x20)) {
+                const auto listFields = ReadMemberValue<ListObjectFieldsRaw>(grassListObject, 0x10);
+                auto grassEntries = readObjectArray(listFields.items, "[Terrain][grassEntries]", listFields.size > 0 ? static_cast<size_t>(listFields.size) : 0);
+                for (void* grassEntry : grassEntries) {
+                    if (!grassEntry || !IsReadableMemory(grassEntry, 0x28)) continue;
+                    auto polygons = polygonsFromPolygonArray(ReadMemberPtr(grassEntry, 0x20), "grass", "[Terrain][grassPolygons]");
+                    for (auto& polygon : polygons) {
+                        m_terrainData.grassPolygons.push_back(std::move(polygon));
+                    }
+                }
+            }
+        }
+    }
+
+    LOG(LOG_LEVEL_INFO,
+        "[Terrain] updateTerrainData 完成，bound=%zu obstacle=%zu grass=%zu",
+        m_terrainData.boundPolygon.points.size(),
+        m_terrainData.obstaclePolygons.size(),
+        m_terrainData.grassPolygons.size());
+
+    return !m_terrainData.boundPolygon.points.empty() ||
+           !m_terrainData.obstaclePolygons.empty() ||
+           !m_terrainData.grassPolygons.empty();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // printMiniMapData() — 打印 m_miniMapData 中存储的数据快照（调试用）
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1159,8 +2752,8 @@ void lol::FEVisi::printMiniMapData() const {
             i, h.iconType, h.heroLevel, h.curHp, h.maxHp,
             h.worldPos.x, h.worldPos.y, h.worldPos.z, h.hasWorldPos);
         LOG(LOG_LEVEL_INFO,
-            "[ALLRADAR]║       resId=%d  hero=%s  summoner=%s  atkRange=%.2f",
-            h.heroResId, h.heroName.c_str(), h.summonerName.c_str(), h.atkRange);
+            "[ALLRADAR]║       resId=%d  objId=%u  hero=%s  summoner=%s  atkRange=%.2f",
+            h.heroResId, h.objId, h.heroName.c_str(), h.summonerName.c_str(), h.atkRange);
         LOG(LOG_LEVEL_INFO,
             "[ALLRADAR]║       screen=(%.1f,%.1f) screenValid=%d",
             h.screenX, h.screenY, h.hasScreenPos);
